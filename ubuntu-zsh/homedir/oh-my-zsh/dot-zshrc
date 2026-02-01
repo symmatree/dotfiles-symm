@@ -1,0 +1,45 @@
+export PATH=/usr/local/go/bin:/usr/local/bin:~/go/bin:~/.krew/bin:$PATH
+
+# Path to your Oh My Zsh installation.
+export ZSH="$HOME/.oh-my-zsh"
+# Populated by install.sh
+export ZSH_CUSTOM="$HOME/.zshcustom"
+
+ZSH_THEME="agnoster"
+
+# Uncomment the following line to use hyphen-insensitive completion.
+# Case-sensitive completion must be off. _ and - will be interchangeable.
+HYPHEN_INSENSITIVE="true"
+zstyle ':omz:update' mode auto      # update automatically without asking
+
+zstyle ':omz:plugins:alias-finder' autoload yes
+
+COMPLETION_WAITING_DOTS="true"
+
+# Uncomment the following line if you want to disable marking untracked files
+# under VCS as dirty. This makes repository status check for large repositories
+# much, much faster.
+DISABLE_UNTRACKED_FILES_DIRTY="true"
+
+# ZSH_TMUX_AUTOSTART="true"
+ZSH_TMUX_AUTONAME_SESSION="true"
+
+# Add wisely, as too many plugins slow down shell startup.
+plugins=(aliases alias-finder command-not-found common-aliases gh git golang kubectl kubectx pip timer tmux zsh-syntax-highlighting zsh-autosuggestions)
+
+source $ZSH/oh-my-zsh.sh
+export MANPATH="/usr/local/man:$MANPATH"
+export LANG=C.UTF-8
+
+# Preferred editor for local and remote sessions
+if [[ -n $SSH_CONNECTION ]]; then
+  export EDITOR='emacs'
+else
+  export EDITOR='code'
+fi
+
+# Replaced by a global path entry thanks to the ansible.
+# Except it doesn't seem to work.
+eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+
+set -o pipefail

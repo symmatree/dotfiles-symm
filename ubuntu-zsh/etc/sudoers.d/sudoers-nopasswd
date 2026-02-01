@@ -1,0 +1,2 @@
+symmetry ALL=(ALL) NOPASSWD:ALL
+%adm ALL=(ALL) NOPASSWD:ALL

@@ -1,0 +1,52 @@
+name: "pre-commit"
+on:
+  pull_request: {}
+  push:
+    branches:
+      - main # Run post-commit to validate, also to update caches.
+      - sbox
+      - prod
+  workflow_dispatch: {}
+  schedule:
+    - cron: "0 7 * * *" # Daily at 0700 UTC just to see if it's green.
+
+jobs:
+  pre-commit:
+    runs-on: "ubuntu-latest"
+    permissions:
+      contents: "read"
+      pull-requests: "write"
+
+    steps:
+      - uses: "actions/checkout@v6"
+      - shell: bash
+        name: "Make output directory"
+        run: |
+          mkdir -p "${{ runner.temp }}/txt-outputs/"
+
+      - uses: pre-commit/action@v3.0.1
+        name: pre-commit
+        id: pre-commit
+        env:
+          # `no-commit-to-branch` fails when run --all-files against main.
+          SKIP: "no-commit-to-branch"
+        with:
+          # What's a little script injection between friends?
+          # extra_args: '--color=never --all-files | tee "${{ runner.temp }}/txt-outputs/pre-commit.txt"'
+          extra_args: "--color=never --all-files"
+
+      - name: Capture diffs for PR
+        if: (success() || failure()) && github.event_name == 'pull_request'
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "Capture diffs for PR."
+          mkdir -p "${{ runner.temp }}/txt-outputs/"
+          git diff --color --word-diff=color | tee "${{ runner.temp }}/txt-outputs/pre-commit-diff.txt"
+
+      - uses: ./.github/actions/attach-outputs
+        name: Attach pre-commit outputs to PR
+        if: (success() || failure()) && github.event_name == 'pull_request'
+        with:
+          txt_output_dir: "${{ runner.temp }}/txt-outputs/"
+          outcome: ${{ steps.pre-commit.outcome }}
