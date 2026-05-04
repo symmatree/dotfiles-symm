@@ -65,7 +65,7 @@
         enabled: true
     - name: GitHub CLI repository
       deb822_repository:
-        name: github-cli
+        name: githubcli-archive-keyring
         uris: https://cli.github.com/packages
         signed_by: https://cli.github.com/packages/githubcli-archive-keyring.gpg
         suites:
@@ -108,7 +108,9 @@
           - kubectl
           # vscode wants libasound2 but that is a virtual package.
           - libasound2t64
+          - pandoc
           - procps
+          - rclone
           - shellcheck
           - stow
           - sudo

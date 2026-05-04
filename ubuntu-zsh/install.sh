@@ -4,7 +4,7 @@ cd "$(dirname "$0")"
 SAVE_DIR=$(pwd)
 
 # If you just installed, add account and log in via `eval $(op signin)`
-op whoami
+# op whoami
 
 cd "${SAVE_DIR}/homedir"
 for d in */; do

@@ -1,4 +1,4 @@
-export PATH=/usr/local/go/bin:/usr/local/bin:~/go/bin:~/.krew/bin:$PATH
+export PATH=/usr/local/go/bin:/usr/local/bin:~/go/bin:~/.krew/bin:~/.local/bin:$PATH
 
 # Path to your Oh My Zsh installation.
 export ZSH="$HOME/.oh-my-zsh"
@@ -43,3 +43,6 @@ fi
 eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 
 set -o pipefail
+
+# Created by `pipx` on 2026-04-19 00:12:22
+export PATH="$PATH:/home/symmetry/.local/bin"
