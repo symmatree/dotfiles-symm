@@ -7,8 +7,10 @@
       command: dpkg --print-architecture
       register: dpkg_arch
       changed_when: false
+      tags: [nodesource]
     - set_fact:
         dpkg_arch: "{{ dpkg_arch.stdout }}"
+      tags: [nodesource]
     - name: Capture Ubuntu codename
       command: lsb_release -cs
       register: ubuntu_codename
@@ -85,6 +87,59 @@
           - main
         state: present
         enabled: true
+    - name: Grafana APT repository (e.g. mimirtool binary packages)
+      deb822_repository:
+        name: grafana
+        uris:
+          - https://apt.grafana.com
+        signed_by: https://apt.grafana.com/gpg.key
+        suites:
+          - stable
+        components:
+          - main
+        state: present
+        enabled: true
+    - name: Helm APT repository (community Debian packages hosted on Buildkite)
+      deb822_repository:
+        name: helm
+        uris:
+          - https://packages.buildkite.com/helm-linux/helm-debian/any/
+        signed_by: https://packages.buildkite.com/helm-linux/helm-debian/gpgkey
+        suites:
+          - any
+        components:
+          - main
+        state: present
+        enabled: true
+    - name: Remove legacy NodeSource one-line APT list if present
+      file:
+        path: /etc/apt/sources.list.d/nodesource.list
+        state: absent
+    - name: NodeSource repository (Node.js LTS deb822 .sources)
+      deb822_repository:
+        name: nodesource
+        uris:
+          # Node 22.x LTS -- change path to node_20.x etc. if you need another major.
+          - https://deb.nodesource.com/node_22.x
+        signed_by: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
+        suites:
+          - nodistro
+        components:
+          - main
+        architectures:
+          - "{{ dpkg_arch }}"
+        state: present
+        enabled: true
+      when: dpkg_arch in ['amd64', 'arm64']
+    - name: Prefer NodeSource nodejs over distro packages
+      copy:
+        dest: /etc/apt/preferences.d/nodejs
+        mode: "0644"
+        content: |
+          Package: nodejs
+          Pin: origin deb.nodesource.com
+          Pin-Priority: 600
+      when: dpkg_arch in ['amd64', 'arm64']
     - name: Install software
       apt:
         name:
@@ -103,13 +158,18 @@
           - gh
           - git
           - google-cloud-cli
+          - helm
           - htop
           - jq
           - kubectl
+          - kubectx
           # vscode wants libasound2 but that is a virtual package.
           - libasound2t64
+          - mimirtool
+          - nodejs
           - pandoc
           - procps
+          - pre-commit
           - rclone
           - shellcheck
           - stow
@@ -152,21 +212,17 @@
     - name: Install Homebrew packages
       become: false
       community.general.homebrew:
+        # No first-party DEB822/repo for these: use brew, or swap to pinned release tarballs / go install later.
         name:
           - argocd
-          - helm
+          - cilium-cli
           - go-jsonnet
           - jsonnet-bundler
-          - kubectx
           - talosctl
           - tanka
-          - mimirtool
-          # - minio/stable/mc
-          - cilium-cli
-          - yq
         state: present
-        # update_homebrew: true
-        # upgrade_all: true
+        update_homebrew: true
+        upgrade_all: true
     - name: Check if VSCode is already installed
       stat:
         path: /usr/bin/code
@@ -182,8 +238,3 @@
           apt:
             deb: https://go.microsoft.com/fwlink/?LinkID=760868
             state: present
-    - name: Install pip modules
-      pip:
-        name:
-          - pre-commit
-        state: present
