@@ -99,18 +99,31 @@
           - main
         state: present
         enabled: true
-    - name: Helm APT repository (community Debian packages hosted on Buildkite)
+    - name: Docker Engine repository
       deb822_repository:
-        name: helm
-        uris:
-          - https://packages.buildkite.com/helm-linux/helm-debian/any/
-        signed_by: https://packages.buildkite.com/helm-linux/helm-debian/gpgkey
+        name: docker
+        uris: https://download.docker.com/linux/ubuntu
+        signed_by: https://download.docker.com/linux/ubuntu/gpg
         suites:
-          - any
+          - "{{ ubuntu_codename }}"
         components:
-          - main
+          - stable
+        architectures:
+          - "{{ dpkg_arch }}"
         state: present
         enabled: true
+    # - name: Helm APT repository (community Debian packages hosted on Buildkite)
+    #   deb822_repository:
+    #     name: helm
+    #     uris:
+    #       - https://packages.buildkite.com/helm-linux/helm-debian/any/
+    #     signed_by: https://packages.buildkite.com/helm-linux/helm-debian/gpgkey
+    #     suites:
+    #       - any
+    #     components:
+    #       - main
+    #     state: present
+    #     enabled: true
     - name: Remove legacy NodeSource one-line APT list if present
       file:
         path: /etc/apt/sources.list.d/nodesource.list
@@ -152,13 +165,18 @@
           - bsdmainutils
           - buildah
           - ca-certificates
+          - containerd.io
           - dialog
           - dnsutils
+          - docker-buildx-plugin
+          - docker-ce
+          - docker-ce-cli
+          - docker-compose-plugin
           - file
           - gh
           - git
           - google-cloud-cli
-          - helm
+          # - helm
           - htop
           - jq
           - kubectl
@@ -185,6 +203,20 @@
         state: present
         # No cache_valid_time since we just changed the repos.
         update_cache: yes
+    - name: Enable and start Docker Engine
+      systemd:
+        name: docker
+        enabled: true
+        state: started
+    - name: Ensure docker group exists
+      group:
+        name: docker
+        state: present
+    - name: Add Ansible connection user to docker group
+      user:
+        name: "{{ ansible_env.SUDO_USER | default(ansible_user) }}"
+        groups: docker
+        append: true
     - name: Check if Homebrew is already installed
       stat:
         path: /home/linuxbrew/.linuxbrew/bin/brew
