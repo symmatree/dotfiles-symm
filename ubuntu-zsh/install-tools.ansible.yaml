@@ -162,6 +162,7 @@
           - apt-transport-https
           - apt-utils
           - aspell
+          - binfmt-support
           - bsdmainutils
           - buildah
           - ca-certificates
@@ -188,6 +189,7 @@
           - pandoc
           - procps
           - pre-commit
+          - qemu-user-static
           - rclone
           - shellcheck
           - stow
