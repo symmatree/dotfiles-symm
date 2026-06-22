@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-set -euo pipefail
+set -euxo pipefail
 cd "$(dirname "$0")"
 SAVE_DIR=$(pwd)
 
-sudo apt-get update &&
-	sudo apt-get dist-upgrade -y &&
-	DEBIAN_FRONTEND=noninteractive sudo apt-get install -y \
+export DEBIAN_FRONTEND=noninteractive
+sudo apt-get update
+sudo apt-get install -y \
 		--no-install-recommends \
 		ansible \
 		apt-transport-https ca-certificates \
@@ -15,3 +15,6 @@ sudo apt-get update &&
 		ubuntu-server aspell
 
 ansible-playbook -v "$SAVE_DIR/install-tools.ansible.yaml" -i "localhost," --connection=local
+
+sudo apt-get dist-upgrade -y
+sudo apt-get autoremove -y

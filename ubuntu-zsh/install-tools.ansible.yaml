@@ -2,6 +2,10 @@
 - name: Install GitHub CLI and Linux Homebrew
   hosts: all
   become: yes
+  vars:
+    golang_version: "1.26.4"
+    kubernetes_minor: "v1.32"
+    dist_upgrade: false
   tasks:
     - name: Capture dpkg architecture
       command: dpkg --print-architecture
@@ -37,8 +41,8 @@
     - name: Kubernetes repository
       deb822_repository:
         name: kubernetes
-        uris: https://pkgs.k8s.io/core:/stable:/v1.32/deb/
-        signed_by: https://pkgs.k8s.io/core:/stable:/v1.32/deb/Release.key
+        uris: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_minor }}/deb/"
+        signed_by: "https://pkgs.k8s.io/core:/stable:/{{ kubernetes_minor }}/deb/Release.key"
         suites:
           - /
         state: present
@@ -132,7 +136,6 @@
       deb822_repository:
         name: nodesource
         uris:
-          # Node 22.x LTS -- change path to node_20.x etc. if you need another major.
           - https://deb.nodesource.com/node_22.x
         signed_by: https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key
         suites:
@@ -153,6 +156,33 @@
           Pin: origin deb.nodesource.com
           Pin-Priority: 600
       when: dpkg_arch in ['amd64', 'arm64']
+    - name: VS Code repository
+      deb822_repository:
+        name: vscode
+        uris: https://packages.microsoft.com/repos/code
+        signed_by: https://packages.microsoft.com/keys/microsoft.asc
+        suites:
+          - stable
+        components:
+          - main
+        architectures:
+          - "{{ dpkg_arch }}"
+        state: present
+        enabled: true
+
+    - name: Claude Code APT repository
+      deb822_repository:
+        name: claude-code
+        uris:
+          - https://downloads.claude.ai/claude-code/apt/stable
+        signed_by: https://downloads.claude.ai/keys/claude-code.asc
+        suites:
+          - stable
+        components:
+          - main
+        state: present
+        enabled: true
+
     - name: Install software
       apt:
         name:
@@ -166,6 +196,8 @@
           - bsdmainutils
           - buildah
           - ca-certificates
+          - claude-code
+          - code
           - containerd.io
           - dialog
           - dnsutils
@@ -205,6 +237,7 @@
         state: present
         # No cache_valid_time since we just changed the repos.
         update_cache: yes
+
     - name: Enable and start Docker Engine
       systemd:
         name: docker
@@ -219,6 +252,20 @@
         name: "{{ ansible_env.SUDO_USER | default(ansible_user) }}"
         groups: docker
         append: true
+
+    - name: Check installed Go version
+      command: /usr/local/go/bin/go version
+      register: go_installed
+      changed_when: false
+      failed_when: false
+    - name: Install Go {{ golang_version }}
+      shell: |
+        curl -LO "https://go.dev/dl/go{{ golang_version }}.linux-{{ dpkg_arch }}.tar.gz"
+        rm -rf /usr/local/go
+        tar -C /usr/local -xzf go{{ golang_version }}.linux-{{ dpkg_arch }}.tar.gz
+        rm go{{ golang_version }}.linux-{{ dpkg_arch }}.tar.gz
+      when: "'go' + golang_version not in go_installed.stdout"
+
     - name: Check if Homebrew is already installed
       stat:
         path: /home/linuxbrew/.linuxbrew/bin/brew
@@ -236,13 +283,7 @@
         line: eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
         create: yes
         state: present
-    - name: Install golang 1.24.1
-      shell: |
-        curl -LO "https://go.dev/dl/go1.24.1.linux-{{ dpkg_arch }}.tar.gz"
-        tar -C /usr/local -xzf go1.24.1.linux-{{ dpkg_arch }}.tar.gz
-        rm go1.24.1.linux-{{ dpkg_arch }}.tar.gz
-      args:
-        creates: /usr/local/go/bin/go
+
     - name: Install Homebrew packages
       become: false
       community.general.homebrew:
@@ -257,18 +298,3 @@
         state: present
         update_homebrew: true
         upgrade_all: true
-    - name: Check if VSCode is already installed
-      stat:
-        path: /usr/bin/code
-      register: code_stat
-    - name: Install vscode
-      when: not code_stat.stat.exists
-      block:
-        - name: Add Microsoft repository
-          shell: |
-            echo "code code/add-microsoft-repo boolean true" | sudo debconf-set-selections
-          changed_when: false
-        - name: Install packages
-          apt:
-            deb: https://go.microsoft.com/fwlink/?LinkID=760868
-            state: present
