@@ -6,6 +6,12 @@
     golang_version: "1.26.4"
     kubernetes_minor: "v1.32"
     dist_upgrade: false
+    # Feature flags — override via -e @vars/rpi-console.yaml (or similar)
+    install_vscode: true        # VS Code GUI editor; skip on headless/armhf
+    install_claude_code: true   # Claude Code CLI; repo lacks armhf packages
+    install_k8s_tools: true     # kubectl, kubectx
+    install_cloud_tools: true   # gcloud, terraform, mimirtool, 1password-cli
+    install_qemu: true          # qemu-user-static + binfmt-support (not needed on ARM host)
   tasks:
     - name: Capture dpkg architecture
       command: dpkg --print-architecture
@@ -169,6 +175,13 @@
           - "{{ dpkg_arch }}"
         state: present
         enabled: true
+      when: install_vscode
+
+    - name: Remove legacy Claude Code one-line APT list if present
+      file:
+        path: /etc/apt/sources.list.d/claude-code.list
+        state: absent
+      when: install_claude_code
 
     - name: Claude Code APT repository
       deb822_repository:
@@ -181,23 +194,21 @@
         components:
           - main
         state: present
-        enabled: true
+        # Repo serves amd64 + arm64 only; not armhf.
+        enabled: "{{ dpkg_arch in ['amd64', 'arm64'] }}"
+      when: install_claude_code
 
-    - name: Install software
+    - name: Install base packages
       apt:
         name:
-          - 1password-cli
           - ansible
           - apache2-utils
           - apt-transport-https
           - apt-utils
           - aspell
-          - binfmt-support
           - bsdmainutils
           - buildah
           - ca-certificates
-          - claude-code
-          - code
           - containerd.io
           - dialog
           - dnsutils
@@ -208,28 +219,18 @@
           - file
           - gh
           - git
-          - google-cloud-cli
-          # - helm
           - htop
           - jq
-          - kubectl
-          - kubectx
-          # vscode wants libasound2 but that is a virtual package.
-          - libasound2t64
-          - mimirtool
           - nodejs
           - pandoc
           - procps
           - pre-commit
-          - qemu-user-static
           - rclone
           - shellcheck
           - stow
           - sudo
-          - terraform
           - tmux
           - tree
-          - xdg-utils
           - yq
           - zsh
           - zsh-autosuggestions
@@ -237,6 +238,48 @@
         state: present
         # No cache_valid_time since we just changed the repos.
         update_cache: yes
+
+    - name: Install VS Code
+      apt:
+        name:
+          - code
+          # VS Code wants libasound2 but that is a virtual package.
+          - libasound2t64
+          - xdg-utils
+        state: present
+      when: install_vscode
+
+    - name: Install Claude Code
+      apt:
+        name: claude-code
+        state: present
+      when: install_claude_code and dpkg_arch in ['amd64', 'arm64']
+
+    - name: Install Kubernetes tools
+      apt:
+        name:
+          - kubectl
+          - kubectx
+        state: present
+      when: install_k8s_tools
+
+    - name: Install cloud / ops tools
+      apt:
+        name:
+          - 1password-cli
+          - google-cloud-cli
+          - mimirtool
+          - terraform
+        state: present
+      when: install_cloud_tools
+
+    - name: Install QEMU cross-build support
+      apt:
+        name:
+          - binfmt-support
+          - qemu-user-static
+        state: present
+      when: install_qemu
 
     - name: Enable and start Docker Engine
       systemd:

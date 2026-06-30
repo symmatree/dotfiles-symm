@@ -14,7 +14,12 @@ sudo apt-get install -y \
 		tree bsdmainutils \
 		ubuntu-server aspell
 
-ansible-playbook -v "$SAVE_DIR/install-tools.ansible.yaml" -i "localhost," --connection=local
+EXTRA_VARS=""
+if [ -n "${1:-}" ]; then
+    EXTRA_VARS="-e @${SAVE_DIR}/vars/${1}.yaml"
+fi
+# shellcheck disable=SC2086
+ansible-playbook -v "$SAVE_DIR/install-tools.ansible.yaml" -i "localhost," --connection=local $EXTRA_VARS
 
 sudo apt-get dist-upgrade -y
 sudo apt-get autoremove -y

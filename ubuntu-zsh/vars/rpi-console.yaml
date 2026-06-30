@@ -1,0 +1,10 @@
+---
+# Profile for a general-purpose Raspberry Pi console/dev machine.
+# Omits GUI tools (VS Code), armhf-incompatible repos (Claude Code on 32-bit),
+# and cloud-specific ops tooling unlikely to be needed on a Pi.
+# All vars default to true in the playbook; only overrides are listed here.
+
+install_vscode: false       # headless machine, no GUI
+install_claude_code: true   # arm64 OS required; repo lacks armhf packages
+install_cloud_tools: false  # skip gcloud, terraform, mimirtool, 1password-cli
+install_qemu: false         # not needed on the ARM host itself
