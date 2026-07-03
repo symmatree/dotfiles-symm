@@ -12,6 +12,7 @@
     install_k8s_tools: true     # kubectl, kubectx
     install_cloud_tools: true   # gcloud, terraform, mimirtool, 1password-cli
     install_qemu: true          # qemu-user-static + binfmt-support (not needed on ARM host)
+    install_notebook_tools: true  # texlive, playwright, nbconvert[webpdf], folium
   tasks:
     - name: Capture dpkg architecture
       command: dpkg --print-architecture
@@ -281,6 +282,15 @@
         state: present
       when: install_qemu
 
+    - name: Install notebook PDF rendering packages
+      apt:
+        name:
+          - texlive-fonts-recommended
+          - texlive-plain-generic
+          - texlive-xetex
+        state: present
+      when: install_notebook_tools
+
     - name: Enable and start Docker Engine
       systemd:
         name: docker
@@ -326,6 +336,32 @@
         line: eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
         create: yes
         state: present
+
+    - name: Install notebook analysis Python packages
+      pip:
+        name:
+          # Offline notebook execution and parameter injection.
+          - papermill
+          # Ardupilot .bin log parsing for flight analysis notebooks.
+          - pymavlink
+          # Kubernetes Python client for cluster health notebooks.
+          - kubernetes
+          # PDF export via headless Chromium (playwright provides the browser).
+          - nbconvert[webpdf]
+          # Interactive map tiles in flight analysis notebooks.
+          - folium
+        state: present
+      when: install_notebook_tools
+
+    - name: Install Playwright browsers for webpdf export
+      shell: python3 -m playwright install --with-deps chromium
+      environment:
+        PLAYWRIGHT_BROWSERS_PATH: /opt/playwright-browsers
+      when: install_notebook_tools
+
+    - name: Allow all users to read/execute Playwright browsers
+      shell: chmod -R o+rx /opt/playwright-browsers
+      when: install_notebook_tools
 
     - name: Install Homebrew packages
       become: false
