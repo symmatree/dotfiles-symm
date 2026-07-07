@@ -13,6 +13,8 @@
     install_cloud_tools: true   # gcloud, terraform, mimirtool, 1password-cli
     install_qemu: true          # qemu-user-static + binfmt-support (not needed on ARM host)
     install_notebook_tools: true  # texlive, playwright, nbconvert[webpdf], folium
+    install_docker: true        # Docker Engine + CLI from Docker's apt repo
+    install_brew: true          # Homebrew + brew-only tools; unsupported on Linux arm64
   tasks:
     - name: Capture dpkg architecture
       command: dpkg --print-architecture
@@ -22,12 +24,12 @@
     - set_fact:
         dpkg_arch: "{{ dpkg_arch.stdout }}"
       tags: [nodesource]
-    - name: Capture Ubuntu codename
+    - name: Capture distro codename
       command: lsb_release -cs
-      register: ubuntu_codename
+      register: distro_codename
       changed_when: false
     - set_fact:
-        ubuntu_codename: "{{ ubuntu_codename.stdout }}"
+        distro_codename: "{{ distro_codename.stdout }}"
     - name: Install initial packages
       apt:
         name:
@@ -65,6 +67,7 @@
           - main
         state: present
         enabled: true
+      when: install_cloud_tools
     - name: GCloud repository
       deb822_repository:
         name: gcloud
@@ -76,6 +79,7 @@
           - main
         state: present
         enabled: true
+      when: install_cloud_tools
     - name: GitHub CLI repository
       deb822_repository:
         name: githubcli-archive-keyring
@@ -93,11 +97,12 @@
         uris: https://apt.releases.hashicorp.com
         signed_by: https://apt.releases.hashicorp.com/gpg
         suites:
-          - "{{ ubuntu_codename }}"
+          - "{{ distro_codename }}"
         components:
           - main
         state: present
         enabled: true
+      when: install_cloud_tools
     - name: Grafana APT repository (e.g. mimirtool binary packages)
       deb822_repository:
         name: grafana
@@ -110,19 +115,23 @@
           - main
         state: present
         enabled: true
+      when: install_cloud_tools
+    # Docker's apt repo path is per-distro: /linux/ubuntu vs /linux/debian
+    # (Raspberry Pi OS reports as Debian). Derive it so this works on both.
     - name: Docker Engine repository
       deb822_repository:
         name: docker
-        uris: https://download.docker.com/linux/ubuntu
-        signed_by: https://download.docker.com/linux/ubuntu/gpg
+        uris: "https://download.docker.com/linux/{{ ansible_facts.distribution | lower }}"
+        signed_by: "https://download.docker.com/linux/{{ ansible_facts.distribution | lower }}/gpg"
         suites:
-          - "{{ ubuntu_codename }}"
+          - "{{ distro_codename }}"
         components:
           - stable
         architectures:
           - "{{ dpkg_arch }}"
         state: present
         enabled: true
+      when: install_docker
     # - name: Helm APT repository (community Debian packages hosted on Buildkite)
     #   deb822_repository:
     #     name: helm
@@ -210,13 +219,8 @@
           - bsdmainutils
           - buildah
           - ca-certificates
-          - containerd.io
           - dialog
           - dnsutils
-          - docker-buildx-plugin
-          - docker-ce
-          - docker-ce-cli
-          - docker-compose-plugin
           - file
           - gh
           - git
@@ -291,20 +295,34 @@
         state: present
       when: install_notebook_tools
 
+    - name: Install Docker Engine packages
+      apt:
+        name:
+          - containerd.io
+          - docker-buildx-plugin
+          - docker-ce
+          - docker-ce-cli
+          - docker-compose-plugin
+        state: present
+      when: install_docker
+
     - name: Enable and start Docker Engine
       systemd:
         name: docker
         enabled: true
         state: started
+      when: install_docker
     - name: Ensure docker group exists
       group:
         name: docker
         state: present
+      when: install_docker
     - name: Add Ansible connection user to docker group
       user:
         name: "{{ ansible_env.SUDO_USER | default(ansible_user) }}"
         groups: docker
         append: true
+      when: install_docker
 
     - name: Check installed Go version
       command: /usr/local/go/bin/go version
@@ -323,19 +341,21 @@
       stat:
         path: /home/linuxbrew/.linuxbrew/bin/brew
       register: brew_stat
+      when: install_brew
     - name: Install Homebrew
       become: no
       shell: |
         /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
       args:
         creates: /home/linuxbrew/.linuxbrew/bin/brew
-      when: not brew_stat.stat.exists
+      when: install_brew and not brew_stat.stat.exists
     - name: Add Homebrew to PATH for all users
       lineinfile:
         path: /etc/profile.d/brew.sh
         line: eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
         create: yes
         state: present
+      when: install_brew
 
     - name: Install notebook analysis Python packages
       pip:
@@ -377,3 +397,4 @@
         state: present
         update_homebrew: true
         upgrade_all: true
+      when: install_brew
