@@ -12,7 +12,7 @@ sudo apt-get install -y \
 		apt-utils dialog \
 		sudo procps file git openssh-server \
 		tree bsdmainutils \
-		ubuntu-server aspell
+		aspell
 
 EXTRA_VARS=""
 if [ -n "${1:-}" ]; then

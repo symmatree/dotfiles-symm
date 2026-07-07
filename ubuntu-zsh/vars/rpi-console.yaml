@@ -1,10 +1,15 @@
 ---
-# Profile for a general-purpose Raspberry Pi console/dev machine.
-# Omits GUI tools (VS Code), armhf-incompatible repos (Claude Code on 32-bit),
-# and cloud-specific ops tooling unlikely to be needed on a Pi.
+# Profile for a general-purpose Raspberry Pi console/dev machine
+# running Raspberry Pi OS (Debian, arm64).
+# Omits: GUI tools (VS Code), cloud/ops tooling, QEMU (native ARM host),
+# the notebook/PDF stack (heavy + pip is PEP 668-managed on Debian),
+# Docker (net tool, not required here), and Homebrew (no Linux arm64 support).
 # All vars default to true in the playbook; only overrides are listed here.
 
-install_vscode: false       # headless machine, no GUI
-install_claude_code: true   # arm64 OS required; repo lacks armhf packages
-install_cloud_tools: false  # skip gcloud, terraform, mimirtool, 1password-cli
-install_qemu: false         # not needed on the ARM host itself
+install_vscode: false           # headless machine, no GUI
+install_claude_code: true       # arm64 OS required; repo lacks armhf packages
+install_cloud_tools: false      # skip gcloud, terraform, mimirtool, 1password-cli
+install_qemu: false             # not needed on the ARM host itself
+install_notebook_tools: false   # texlive/playwright heavy; pip PEP 668 on Debian
+install_docker: false           # net tool, not required on this Pi
+install_brew: false             # Homebrew has no Linux arm64 bottles
