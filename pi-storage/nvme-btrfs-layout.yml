@@ -1,0 +1,210 @@
+---
+# Power-safe Pi storage: partition + format a drive (NVMe on Pi 5, USB SSD on
+# Pi 4B) with the btrfs subvolume layout from the "power-unstable-pi" pattern.
+#
+# Run ON the target Pi, from its current (SD) system, BEFORE the OS is moved onto
+# the drive. This is FORMAT-ONLY: it does not copy the OS, does not touch
+# BOOT_ORDER, and does not remove the SD -- so it is safe to run while the SD is
+# the live boot medium. The running system is untouched; only `ssd_device` is
+# written.
+#
+# Layout (see facts/topics/power-unstable-pi.md):
+#   p1  FAT32  bootfs   -> /boot/firmware (firmware needs FAT; mount RO in use)
+#   p2  btrfs  rootfs   -> subvolumes:
+#         @          -> /               CoW + checksums + zstd
+#         @home      -> /home           CoW + checksums + zstd   (precious data)
+#         @log       -> /var/log        CoW + zstd               (excluded from root snaps)
+#         @docker    -> /var/lib/docker nodatacow                (CoW-on-CoW footgun)
+#         @scratch   -> /scratch        nodatacow                (ephemeral; never snapshotted)
+#         @snapshots -> /.snapshots
+#
+# Usage (destructive to ssd_device, default /dev/nvme0n1):
+#   sudo ansible-playbook pi-storage/nvme-btrfs-layout.yml -e ssd_confirm=WIPE
+#
+# Idempotent: re-running does not re-partition or re-mkfs an already-formatted
+# drive, and subvolume creation is create-if-absent. To force a clean redo, wipe
+# the drive first (e.g. wipefs -a) and re-run.
+
+- name: Power-safe Pi btrfs storage layout (format only)
+  hosts: localhost
+  connection: local
+  become: true
+  gather_facts: false
+
+  vars:
+    ssd_device: /dev/nvme0n1
+    ssd_confirm: ""                      # must equal "WIPE" to allow destructive steps
+    boot_end: "513MiB"                   # p1 = 1MiB..513MiB (~512MiB FAT)
+    top_mnt: /mnt/ps-top                 # temporary mount of the btrfs top-level (subvolid=5)
+    part_suffix: "{{ 'p' if ('nvme' in ssd_device or 'mmcblk' in ssd_device) else '' }}"
+    subvols:
+      - { name: "@",          cow: true,  mount: "/" }
+      - { name: "@home",      cow: true,  mount: "/home" }
+      - { name: "@log",       cow: true,  mount: "/var/log" }
+      - { name: "@docker",    cow: false, mount: "/var/lib/docker" }
+      - { name: "@scratch",   cow: false, mount: "/scratch" }
+      - { name: "@snapshots", cow: true,  mount: "/.snapshots" }
+
+  vars_files: []
+
+  pre_tasks:
+    - name: Compute partition device names
+      ansible.builtin.set_fact:
+        boot_part: "{{ ssd_device }}{{ part_suffix }}1"
+        root_part: "{{ ssd_device }}{{ part_suffix }}2"
+
+    - name: Require explicit confirmation
+      ansible.builtin.assert:
+        that: ssd_confirm == "WIPE"
+        fail_msg: "Destructive to {{ ssd_device }}. Re-run with -e ssd_confirm=WIPE."
+        quiet: true
+
+    - name: Target is a block device
+      ansible.builtin.stat:
+        path: "{{ ssd_device }}"
+      register: dev
+
+    - name: Assert block device
+      ansible.builtin.assert:
+        that:
+          - dev.stat.exists
+          - dev.stat.isblk | default(false)
+        fail_msg: "{{ ssd_device }} is not a block device."
+        quiet: true
+
+    - name: Refuse if the target hosts root or is mounted
+      ansible.builtin.shell: |
+        set -o pipefail
+        findmnt -rno SOURCE / | grep -q "^{{ ssd_device }}" && echo ROOTHERE || true
+        for p in "{{ ssd_device }}" "{{ boot_part }}" "{{ root_part }}"; do
+          t=$(findmnt -rno TARGET -S "$p" 2>/dev/null || true)
+          [ -n "$t" ] && echo "MOUNTED:$p:$t" || true
+        done
+      args:
+        executable: /bin/bash
+      register: safety
+      changed_when: false
+
+    - name: Assert target is idle
+      ansible.builtin.assert:
+        that:
+          - "'ROOTHERE' not in safety.stdout"
+          - "'MOUNTED' not in safety.stdout"
+        fail_msg: "{{ ssd_device }} hosts root or is mounted -- refusing. ({{ safety.stdout }})"
+        quiet: true
+
+  tasks:
+    - name: Inspect current partitions
+      ansible.builtin.command: "lsblk -no NAME {{ ssd_device }}"
+      register: parts
+      changed_when: false
+
+    - name: Partition (MBR: p1 512M FAT boot, p2 rest) if p2 absent
+      ansible.builtin.shell: |
+        set -euo pipefail
+        parted -s "{{ ssd_device }}" mklabel msdos
+        parted -s "{{ ssd_device }}" mkpart primary fat32 1MiB {{ boot_end }}
+        parted -s "{{ ssd_device }}" set 1 boot on
+        parted -s "{{ ssd_device }}" mkpart primary {{ boot_end }} 100%
+        partprobe "{{ ssd_device }}"
+        udevadm settle
+      args:
+        executable: /bin/bash
+      when: (root_part | basename) not in parts.stdout
+
+    - name: Current FS type on boot partition
+      ansible.builtin.command: "blkid -o value -s TYPE {{ boot_part }}"
+      register: boot_type
+      changed_when: false
+      failed_when: false
+
+    - name: mkfs.vfat on boot partition if not already vfat
+      ansible.builtin.command: "mkfs.vfat -F32 -n bootfs {{ boot_part }}"
+      when: "'vfat' not in boot_type.stdout"
+
+    - name: Current FS type on root partition
+      ansible.builtin.command: "blkid -o value -s TYPE {{ root_part }}"
+      register: root_type
+      changed_when: false
+      failed_when: false
+
+    - name: mkfs.btrfs on root partition if not already btrfs
+      ansible.builtin.command: "mkfs.btrfs -f -L rootfs {{ root_part }}"
+      when: "'btrfs' not in root_type.stdout"
+
+    - name: Temp mountpoint for the btrfs top-level
+      ansible.builtin.file:
+        path: "{{ top_mnt }}"
+        state: directory
+        mode: "0755"
+
+    - name: Is the top-level already mounted?
+      ansible.builtin.command: "findmnt -rno TARGET {{ top_mnt }}"
+      register: topm
+      changed_when: false
+      failed_when: false
+
+    - name: Mount btrfs top-level (subvolid=5)
+      ansible.builtin.command: "mount -o subvolid=5 {{ root_part }} {{ top_mnt }}"
+      when: topm.stdout | trim == ""
+
+    - name: Create subvolumes (create-if-absent)
+      ansible.builtin.command: "btrfs subvolume create {{ top_mnt }}/{{ item.name }}"
+      args:
+        creates: "{{ top_mnt }}/{{ item.name }}"
+      loop: "{{ subvols }}"
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Set nodatacow on churny/ephemeral subvolumes (inherited by new files)
+      ansible.builtin.command: "chattr +C {{ top_mnt }}/{{ item.name }}"
+      loop: "{{ subvols }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: not item.cow
+      changed_when: false
+
+    - name: Set zstd compression property on CoW subvolumes
+      ansible.builtin.command: "btrfs property set {{ top_mnt }}/{{ item.name }} compression zstd"
+      loop: "{{ subvols }}"
+      loop_control:
+        label: "{{ item.name }}"
+      when: item.cow
+      changed_when: false
+
+    - name: Read filesystem UUIDs
+      ansible.builtin.command: "blkid -o value -s UUID {{ item }}"
+      register: uuids
+      changed_when: false
+      loop:
+        - "{{ boot_part }}"
+        - "{{ root_part }}"
+
+    - name: Stash UUIDs
+      ansible.builtin.set_fact:
+        boot_uuid: "{{ uuids.results[0].stdout }}"
+        root_uuid: "{{ uuids.results[1].stdout }}"
+
+    - name: Write the intended fstab as an artifact (NOT installed)
+      ansible.builtin.copy:
+        dest: "{{ top_mnt }}/NVME-FSTAB.txt"
+        mode: "0644"
+        content: |
+          # Intended /etc/fstab for the {{ ssd_device }} cutover -- reference only,
+          # written by pi-storage/nvme-btrfs-layout.yml. Not installed on any system.
+          UUID={{ boot_uuid }}  /boot/firmware  vfat   defaults,ro                              0  2
+          {% for s in subvols %}
+          UUID={{ root_uuid }}  {{ '%-14s' | format(s.mount) }}  btrfs  noatime,{{ 'compress=zstd,' if s.cow else 'nodatacow,' }}subvol={{ s.name }}  0  {{ '1' if s.mount == '/' else '2' }}
+          {% endfor %}
+
+    - name: Show resulting subvolume tree
+      ansible.builtin.command: "btrfs subvolume list {{ top_mnt }}"
+      register: subvol_list
+      changed_when: false
+
+    - name: Report layout
+      ansible.builtin.debug:
+        msg: "{{ subvol_list.stdout_lines }}"
+
+    - name: Unmount the top-level
+      ansible.builtin.command: "umount {{ top_mnt }}"
