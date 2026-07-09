@@ -99,7 +99,7 @@
       register: parts
       changed_when: false
 
-    - name: Partition (MBR: p1 512M FAT boot, p2 rest) if p2 absent
+    - name: "Partition (MBR label: p1 512M FAT boot, p2 rest) if p2 absent"
       ansible.builtin.shell: |
         set -euo pipefail
         parted -s "{{ ssd_device }}" mklabel msdos
