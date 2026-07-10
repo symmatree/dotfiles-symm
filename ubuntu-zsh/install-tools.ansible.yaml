@@ -25,7 +25,10 @@
         dpkg_arch: "{{ dpkg_arch.stdout }}"
       tags: [nodesource]
     - name: Capture distro codename
-      command: lsb_release -cs
+      # Read /etc/os-release (always present) rather than lsb_release, whose
+      # binary is not installed on minimal images (e.g. the notebook container)
+      # and which is only installed later in this play anyway.
+      shell: '. /etc/os-release && echo "${VERSION_CODENAME:-$UBUNTU_CODENAME}"'
       register: distro_codename
       changed_when: false
     - set_fact:
