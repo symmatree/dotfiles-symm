@@ -45,7 +45,6 @@
           - lsb-release
           # Needed for deb822_repository to work.
           - python3-debian
-          - software-properties-common
           - wget
         state: present
         update_cache: yes
