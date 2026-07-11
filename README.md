@@ -13,6 +13,12 @@ and the tiles/jupyterhub copy are meant to become **subsets** of this master rat
 parallel reimplementations. Bring-up of the first such device (pipboy) is tracked in
 [symmatree/tiles #599](https://github.com/symmatree/tiles/issues/599).
 
+These devices take **routine abrupt power loss** and are often **offline**, so the base this repo builds
+is the read-only, resilient base of that design. The shared pattern is `facts/topics/power-unstable-pi.md`
+(RO base + writable overlay + persistent local data); the drone-coordinator specifics are in
+[symmatree/coordinator #41](https://github.com/symmatree/coordinator/issues/41) and that repo's
+`docs/power-loss-filesystem.md`.
+
 ## Kubernetes
 
 Ansible installs **`kubectl`** and **`kubectx`** (see `ubuntu-zsh/install-tools.ansible.yaml`). Credentials are not in this repo. For Symmatree **Tiles** clusters (test and prod), fetch kubeconfigs from 1Password and merge into `~/.kube/config` as described in **`https://github.com/symmatree/tiles/blob/main/docs/dev-setup.md`** (Kubeconfig section). The same merge pattern applies for other clusters so one `~/.kube/config` is not tied to a single project.
