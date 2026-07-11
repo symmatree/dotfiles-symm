@@ -5,6 +5,10 @@
   vars:
     golang_version: "1.26.4"
     kubernetes_minor: "v1.32"
+    # Pinned to the tiles CI helm (azure/setup-helm default in
+    # .github/actions/helm-setup) so local chart renders are byte-identical.
+    # Bump in lockstep with that. See dotfiles-symm#10 / tiles#589.
+    helm_version: "4.2.0"
     dist_upgrade: false
     # Feature flags — override via -e @vars/rpi-console.yaml (or similar)
     install_vscode: true        # VS Code GUI editor; skip on headless/armhf
@@ -238,7 +242,6 @@
           - sudo
           - tmux
           - tree
-          - yq
           - zsh
           - zsh-autosuggestions
           - zsh-syntax-highlighting
@@ -396,7 +399,37 @@
           - jsonnet-bundler
           - talosctl
           - tanka
+          # mikefarah yq v4 (Go). NOT apt: apt's `yq` is python-yq (jq wrapper),
+          # which JSON-quotes strings and breaks tiles' ci-tools/helm-add-repos.sh
+          # (`helm repo add` -> "invalid chart URL format"). See dotfiles-symm#10.
+          - yq
         state: present
         update_homebrew: true
         upgrade_all: true
       when: install_brew
+
+    # Helm, pinned to the exact version tiles CI uses (azure/setup-helm in
+    # .github/actions/helm-setup) so `build.sh` renders are byte-identical to CI.
+    # NOT from apt: the Buildkite helm-debian repo's only 4.x build is 4.2.0, not
+    # the pinned 4.1.4 -- so fetch the exact release from get.helm.sh (the same
+    # source azure/setup-helm uses; portable to amd64/arm64 via dpkg_arch).
+    # This is ops/build tooling, so it follows install_cloud_tools (off on rpi).
+    - name: Check installed helm version
+      command: helm version --short
+      register: helm_installed
+      changed_when: false
+      failed_when: false
+      when: install_cloud_tools
+    - name: Install helm {{ helm_version }} to /usr/local/bin
+      become: true
+      unarchive:
+        src: "https://get.helm.sh/helm-v{{ helm_version }}-linux-{{ dpkg_arch }}.tar.gz"
+        dest: /usr/local/bin
+        remote_src: true
+        extra_opts:
+          - --strip-components=1
+          - linux-{{ dpkg_arch }}/helm
+        mode: "0755"
+      when:
+        - install_cloud_tools
+        - helm_version not in (helm_installed.stdout | default(''))
