@@ -44,5 +44,5 @@ eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
 
 set -o pipefail
 
-# Created by `pipx` on 2026-04-19 00:12:22
-export PATH="$PATH:/home/symmetry/.local/bin"
+# Created by `pipx` on 2026-04-19 00:12:22 (portable: was hardcoded to a WSL user home)
+export PATH="$PATH:$HOME/.local/bin"
