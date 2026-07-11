@@ -8,7 +8,7 @@
     # Pinned to the tiles CI helm (azure/setup-helm default in
     # .github/actions/helm-setup) so local chart renders are byte-identical.
     # Bump in lockstep with that. See dotfiles-symm#10 / tiles#589.
-    helm_version: "4.1.4"
+    helm_version: "4.2.0"
     dist_upgrade: false
     # Feature flags — override via -e @vars/rpi-console.yaml (or similar)
     install_vscode: true        # VS Code GUI editor; skip on headless/armhf
