@@ -3,6 +3,15 @@
 Repo for easy access to my dotfiles as well as installation for primary
 tools.
 
+## JupyterHub notebook
+
+For rebuilding the tiles `datascience-notebook-ssh` environment after a home-dir
+wipe (dotfiles, oh-my-zsh, and loading kube/talos secrets from 1Password), see
+[`ubuntu-zsh/NOTES-notebook.md`](ubuntu-zsh/NOTES-notebook.md). On-disk
+credentials are refreshed via
+[`ubuntu-zsh/refresh-secrets.sh`](ubuntu-zsh/refresh-secrets.sh) (holds only
+`op://` reference paths, no secret material).
+
 ## Raspberry Pi host bootstrap
 
 `ubuntu-zsh/` (Ansible + the `rpi-console` profile in `ubuntu-zsh/vars/`) is intended
