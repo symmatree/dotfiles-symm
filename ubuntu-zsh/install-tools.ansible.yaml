@@ -138,22 +138,6 @@
         state: present
         enabled: true
       when: install_docker
-    # - name: Helm APT repository (community Debian packages hosted on Buildkite)
-    #   deb822_repository:
-    #     name: helm
-    #     uris:
-    #       - https://packages.buildkite.com/helm-linux/helm-debian/any/
-    #     signed_by: https://packages.buildkite.com/helm-linux/helm-debian/gpgkey
-    #     suites:
-    #       - any
-    #     components:
-    #       - main
-    #     state: present
-    #     enabled: true
-    - name: Remove legacy NodeSource one-line APT list if present
-      file:
-        path: /etc/apt/sources.list.d/nodesource.list
-        state: absent
     - name: NodeSource repository (Node.js LTS deb822 .sources)
       deb822_repository:
         name: nodesource
@@ -193,12 +177,6 @@
         enabled: true
       when: install_vscode
 
-    - name: Remove legacy Claude Code one-line APT list if present
-      file:
-        path: /etc/apt/sources.list.d/claude-code.list
-        state: absent
-      when: install_claude_code
-
     - name: Claude Code APT repository
       deb822_repository:
         name: claude-code
@@ -237,6 +215,7 @@
           - procps
           - pre-commit
           - rclone
+          - rsync
           - shellcheck
           - stow
           - sudo
