@@ -290,12 +290,23 @@
         state: present
       when: install_docker
 
+    # /run/systemd/system exists only when systemd is PID 1 (the sd_booted(3)
+    # check). It is absent during container image builds (buildah/docker build),
+    # where `systemctl start` fails with "Service is in unknown state". Gate the
+    # service start on it so the same playbook bakes into images (e.g. the tiles
+    # datascience-notebook image) yet still enables+starts docker on real
+    # Pi/WSL hosts. The docker packages are still installed either way.
+    - name: Detect whether systemd is the running init
+      stat:
+        path: /run/systemd/system
+      register: systemd_running
+      when: install_docker
     - name: Enable and start Docker Engine
       systemd:
         name: docker
         enabled: true
         state: started
-      when: install_docker
+      when: install_docker and systemd_running.stat.exists
     - name: Ensure docker group exists
       group:
         name: docker
