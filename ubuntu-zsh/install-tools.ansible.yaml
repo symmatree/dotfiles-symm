@@ -312,12 +312,22 @@
         name: docker
         state: present
       when: install_docker
-    - name: Add Ansible connection user to docker group
+    # Resolve the human user to grant docker access: the sudo invoker on a normal
+    # `sudo ansible-playbook` host run, else the user actually running the play.
+    # ansible_user is a *connection* var (undefined unless inventory sets it), so
+    # the old fallback errored during container image builds (root, no sudo,
+    # --connection=local). ansible_user_id is always a gathered fact. When that
+    # resolves to root (image builds), there is no human account to add, so skip.
+    - name: Resolve docker group target user
+      set_fact:
+        docker_group_user: "{{ ansible_env.SUDO_USER | default(ansible_user_id, true) }}"
+      when: install_docker
+    - name: Add that user to the docker group
       user:
-        name: "{{ ansible_env.SUDO_USER | default(ansible_user) }}"
+        name: "{{ docker_group_user }}"
         groups: docker
         append: true
-      when: install_docker
+      when: install_docker and docker_group_user != 'root'
 
     - name: Check installed Go version
       command: /usr/local/go/bin/go version
