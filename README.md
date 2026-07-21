@@ -22,11 +22,13 @@ and the tiles/jupyterhub copy are meant to become **subsets** of this master rat
 parallel reimplementations. Bring-up of the first such device (pipboy) is tracked in
 [symmatree/tiles #599](https://github.com/symmatree/tiles/issues/599).
 
-These devices take **routine abrupt power loss** and are often **offline**, so the base this repo builds
-is the read-only, resilient base of that design. The shared pattern is `facts/topics/power-unstable-pi.md`
-(RO base + writable overlay + persistent local data); the drone-coordinator specifics are in
-[symmatree/coordinator #41](https://github.com/symmatree/coordinator/issues/41) and that repo's
-`docs/power-loss-filesystem.md`.
+These devices take **routine abrupt power loss** and are often **offline**. The resilient base they run
+is a **btrfs subvolume layout** (read-only `/usr`, read-write `/var` / `/home` / `/data`, snapshots — no
+overlay); the shared pattern is `facts/topics/power-unstable-pi.md` and the drone-coordinator specifics
+are [symmatree/coordinator #41](https://github.com/symmatree/coordinator/issues/41). Because that layout
+can't come from a stock flash, this repo is also the intended home for the **fleet image-build pipeline**
+(rpi-image-gen, [coordinator #96](https://github.com/symmatree/coordinator/issues/96)) — the layer that
+builds the partitioned btrfs image each device boots, with the Ansible bootstrap above converging on top.
 
 ## Kubernetes
 
