@@ -37,15 +37,33 @@ Pinned upstream: `2025-05-13-raspios-bookworm-arm64-lite.img.xz`
 (sha256 `62d025b9...ed45`) -- the last *Bookworm* Lite arm64 release (2025-10 onward raspios is
 Trixie). Bump URL+date+sha together in `build-image.sh`.
 
-## Status -- the open gate
+## Status -- built end-to-end; boot unproven, the card is the gate
 
-The subvolume **assembly is verified**; `build-image.sh` now packages a real convert image, but
-whether a Pi actually **boots** from the btrfs-subvol root is **not yet proven**. The crux is the
-initramfs: RPi OS boots with **no initramfs** by default and its kernel has btrfs as a *module*, so
-`build-image.sh` sets `auto_initramfs=1`, adds `btrfs` to `/etc/initramfs-tools/modules`, installs
-`btrfs-progs`, and regenerates the initramfs in a native arm64 chroot. `boot-test.sh` under
-`-M virt` is the CI gate; the strong proof is still a **spare** SD card on real hardware (RPi
-firmware), current ext4 card kept as instant rollback.
+The subvolume **assembly is verified**, and `build-pi-image.yaml` now **builds a real convert image
+end-to-end** in CI: download+verify -> native-chroot initramfs regen with btrfs -> `assemble-btrfs.sh`
+-> package -> compress -> artifact. **Latest image:** `datasets/images/coordinator-pi-<YYYYMMDD>.img.xz`
+on the NAS (a CI build artifact -- regenerable, not source-controlled).
+
+**Boot is NOT yet proven, and the qemu `-M virt` boot-test cannot prove it.** The initramfs comes up
+btrfs-capable, but the Raspberry Pi *downstream* kernel does not initialise virtio on the synthetic
+`-M virt` platform, so no root disk appears (`/dev/vdaX does not exist`) -- an **emulation limitation,
+not an image fault**. Conclusive validation needs `raspi4b`-machine qemu (finicky) or, simplest, a
+**spare SD card on real hardware**, with the current ext4 card kept as instant rollback. That card
+flash is the real gate. (The initramfs crux `build-image.sh` handles: RPi OS boots initramfs-less
+and ships btrfs as a *module*, so it sets `auto_initramfs=1`, adds `btrfs` to the initramfs, installs
+`btrfs-progs`, and regenerates the initramfs in a native arm64 chroot with `MODULES=most`.)
+
+## Flash it
+
+```bash
+# Raspberry Pi Imager: "Use custom" -> select the .img.xz directly (it reads xz).
+# Or from a shell:
+xzcat coordinator-pi-<date>.img.xz | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
+```
+
+The image ships `root=PARTUUID=<btrfs p2> rootfstype=btrfs rootflags=subvol=@` and `auto_initramfs=1`.
+If it does not come up, the boot config (cmdline/initramfs) is where to iterate -- the filesystem
+itself is verified.
 
 ## Run the test
 

@@ -59,13 +59,13 @@ jobs:
           shopt -s nullglob
           imgs=(pi-image/.build/coordinator-pi-*.img)
           xz -T0 -6 "${imgs[0]}"
-          ls -lh pi-image/.build/*.img.xz
+          ls -lh pi-image/.build/coordinator-pi-*.img.xz
 
       - name: "Upload image artifact"
         uses: "actions/upload-artifact@v4"
         with:
           name: "coordinator-pi-btrfs-img"
-          path: "pi-image/.build/*.img.xz"
+          path: "pi-image/.build/coordinator-pi-*.img.xz"
           if-no-files-found: "error"
           include-hidden-files: true
           retention-days: 14
