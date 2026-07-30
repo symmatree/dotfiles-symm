@@ -67,6 +67,7 @@ jobs:
           name: "coordinator-pi-btrfs-img"
           path: "pi-image/.build/*.img.xz"
           if-no-files-found: "error"
+          include-hidden-files: true
           retention-days: 14
 
       - name: "Upload boot-test serial log"
@@ -76,4 +77,5 @@ jobs:
           name: "boot-serial-log"
           path: "pi-image/.build/boot-serial.log"
           if-no-files-found: "ignore"
+          include-hidden-files: true
           retention-days: 14

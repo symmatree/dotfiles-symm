@@ -89,7 +89,7 @@ timeout "$TIMEOUT" qemu-system-aarch64 \
 	-kernel "$WORK/kernel" -initrd "$WORK/initrd" \
 	-append "$APPEND" \
 	-drive file="$IMG",format=raw,if=none,id=hd0 \
-	-device virtio-blk-device,drive=hd0 \
+	-device virtio-blk-pci,drive=hd0 \
 	-nographic -no-reboot -serial file:"$SERIAL" 2>&1 | tail -5 || true
 
 echo "== serial tail =="
