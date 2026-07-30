@@ -1,0 +1,346 @@
+#!/usr/bin/env bash
+#
+# build-image.sh -- convert the official Raspberry Pi OS Lite (Bookworm, arm64)
+# image into the coordinator btrfs-subvolume layout and emit a flashable .img.
+#
+# This is the "convert" pipeline (as opposed to the mmdebstrap "build from
+# scratch" path sketched in README.md): rather than debootstrap a rootfs, we
+# take the vendor image as-is (kernel, firmware, raspberrypi-sys-mods, all the
+# HAT/overlay glue already correct) and only re-lay its rootfs into our
+# @ @usr @var @home @data @snapshots subvolumes via assemble-btrfs.sh, then fix
+# up the boot config so the Pi mounts a btrfs-subvol root.
+#
+# WHERE THIS RUNS: an arm64 host with a btrfs-capable kernel (CI:
+# ubuntu-24.04-arm). It CANNOT run on the x86 Talos notebook (no btrfs, no arm).
+# Because the runner is arm64 and the RPi userland is arm64, we can chroot the
+# extracted rootfs NATIVELY (no qemu-user) to regenerate the initramfs -- that
+# is what lets us add the btrfs module to the initramfs offline (see step 5).
+#
+# Root/loop/mount/mkfs are all required, so run as root (CI: sudo).
+#
+# Usage:
+#   sudo ./build-image.sh [OUT_IMG]
+#     OUT_IMG  final image path (default: pi-image/.build/coordinator-pi-<date>.img)
+#
+# shellcheck disable=SC2015  # a few benign `cond && act || true` cleanup idioms
+set -euo pipefail
+
+# ---- pinned upstream image ---------------------------------------------------
+# Latest Raspberry Pi OS Lite arm64 *Bookworm* release. (2025-10 onward the
+# vendor moved raspios to Trixie; 2025-05-13 is the last Bookworm Lite.) Pinned
+# by URL + sha256 so a rebuild is reproducible and a swapped-out upstream is
+# caught. To bump: change all three of URL/date/sha together.
+RPIOS_URL="https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz"
+RPIOS_SHA256="62d025b9bc7ca0e1facfec74ae56ac13978b6745c58177f081d39fbb8041ed45"
+
+# ---- paths -------------------------------------------------------------------
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BUILD="$HERE/.build" # scratch + artifacts (gitignored)
+DL="$BUILD/$(basename "$RPIOS_URL")"
+SRC_IMG="${DL%.xz}"       # decompressed vendor image
+ROOTFS="$BUILD/rootfs"    # vendor rootfs extracted here
+BOOTSTAGE="$BUILD/bootfs" # vendor /boot/firmware staged + fixed up here
+OUT_IMG="${1:-$BUILD/coordinator-pi-$(date +%Y%m%d).img}"
+
+# Partition geometry of the target image.
+BOOT_MB=512   # FAT32 /boot/firmware
+SLACK_MB=1536 # free space on top of the rootfs footprint
+
+require_root() {
+	[ "$(id -u)" -eq 0 ] || {
+		echo "must run as root (loop/mount/mkfs)" >&2
+		exit 1
+	}
+}
+
+require_tools() {
+	local miss=0 t
+	for t in xz curl sha256sum losetup mount umount rsync parted \
+		mkfs.vfat mkfs.btrfs blkid sfdisk chroot; do
+		command -v "$t" >/dev/null 2>&1 || {
+			echo "missing tool: $t" >&2
+			miss=1
+		}
+	done
+	[ "$miss" -eq 0 ] || exit 1
+}
+
+# ---- global cleanup ----------------------------------------------------------
+# Track everything we attach/mount and release it deepest-first on EXIT.
+SRC_LOOP=""
+DST_LOOP=""
+declare -a MOUNTS=() # mountpoints, in mount order; unmounted in reverse
+
+track_mount() { MOUNTS+=("$1"); }
+
+cleanup() {
+	local i
+	for ((i = ${#MOUNTS[@]} - 1; i >= 0; i--)); do
+		mountpoint -q "${MOUNTS[i]}" && umount -R "${MOUNTS[i]}" 2>/dev/null || true
+	done
+	[ -n "$DST_LOOP" ] && losetup -d "$DST_LOOP" 2>/dev/null || true
+	[ -n "$SRC_LOOP" ] && losetup -d "$SRC_LOOP" 2>/dev/null || true
+}
+trap cleanup EXIT
+
+# =============================================================================
+# 1. fetch + verify + decompress the vendor image
+# =============================================================================
+fetch_source() {
+	mkdir -p "$BUILD"
+	if [ ! -f "$DL" ]; then
+		echo "== downloading $RPIOS_URL =="
+		curl -fL --retry 3 -o "$DL" "$RPIOS_URL"
+	fi
+	echo "== verifying sha256 =="
+	echo "$RPIOS_SHA256  $DL" | sha256sum -c -
+	if [ ! -f "$SRC_IMG" ]; then
+		echo "== decompressing =="
+		xz -dk -T0 "$DL"
+	fi
+}
+
+# =============================================================================
+# 2. loop-attach the vendor image and split rootfs / bootfs out of it
+#    Vendor layout: p1 = FAT32 /boot/firmware, p2 = ext4 root.
+# =============================================================================
+extract_source() {
+	echo "== loop-attaching vendor image =="
+	SRC_LOOP="$(losetup --find --show -P "$SRC_IMG")"
+	echo "   $SRC_LOOP (p1=${SRC_LOOP}p1 boot, p2=${SRC_LOOP}p2 root)"
+
+	local sroot="$BUILD/src-root" sboot="$BUILD/src-boot"
+	mkdir -p "$sroot" "$sboot" "$ROOTFS" "$BOOTSTAGE"
+
+	mount -o ro "${SRC_LOOP}p2" "$sroot"
+	track_mount "$sroot"
+	mount -o ro "${SRC_LOOP}p1" "$sboot"
+	track_mount "$sboot"
+
+	echo "== rsync vendor rootfs -> $ROOTFS =="
+	# --numeric-ids so uid/gid survive; the mounted /boot/firmware is a separate
+	# fs so it is not descended into (rsync without -x still won't cross into it
+	# because we copy from $sroot where firmware is just an empty mountpoint).
+	rsync -aHAX --numeric-ids "$sroot"/ "$ROOTFS"/
+
+	echo "== copy vendor /boot/firmware -> $BOOTSTAGE (staged for fixups) =="
+	rsync -aHAX --numeric-ids "$sboot"/ "$BOOTSTAGE"/
+
+	umount "$sboot" && MOUNTS=("${MOUNTS[@]/$sboot/}")
+	umount "$sroot" && MOUNTS=("${MOUNTS[@]/$sroot/}")
+	losetup -d "$SRC_LOOP"
+	SRC_LOOP=""
+}
+
+# =============================================================================
+# 3. regenerate the initramfs WITH btrfs, natively, via chroot
+#    THE CRUX. RPi OS boots with NO initramfs by default and the stock kernel
+#    has btrfs as a *module*, so a btrfs root needs an initramfs that carries
+#    (and modprobes) btrfs before it can mount /. We add btrfs to the initramfs
+#    module list, install btrfs-progs (ships the initramfs btrfs hook), and run
+#    update-initramfs. auto_initramfs=1 (set in step 6) makes the bootloader
+#    load the resulting initramfs8 / initramfs_2712 automatically.
+#
+#    virtio_* modules are added too, purely so the qemu -M virt boot-test
+#    (boot-test.sh) can find the root disk as /dev/vda; harmless on real Pi.
+# =============================================================================
+regenerate_initramfs() {
+	echo "== chroot: add btrfs (+virtio) to initramfs and rebuild =="
+
+	# Bind the staged boot dir where the kernel/auto_initramfs hooks expect it,
+	# so the generated initramfs lands in $BOOTSTAGE (our future p1).
+	mount --bind "$BOOTSTAGE" "$ROOTFS/boot/firmware"
+	track_mount "$ROOTFS/boot/firmware"
+	for m in proc sys dev dev/pts; do
+		mount --bind "/$m" "$ROOTFS/$m"
+		track_mount "$ROOTFS/$m"
+	done
+	# Give apt working DNS inside the chroot.
+	cp -f /etc/resolv.conf "$ROOTFS/etc/resolv.conf" || true
+
+	# initramfs module list: one module per line (initramfs-tools resolves deps).
+	{
+		echo "btrfs"
+		echo "virtio_pci"
+		echo "virtio_blk"
+		echo "virtio_scsi"
+	} >>"$ROOTFS/etc/initramfs-tools/modules"
+
+	# mkinitramfs's default MODULES=dep introspects the *running* root device to
+	# choose modules -- which fails inside a chroot ("failed to determine device
+	# for /"), aborting the btrfs-progs install trigger. MODULES=most bypasses that
+	# by bundling a broad module set (covers btrfs + virtio); the right choice for
+	# an offline/chroot image build. Must be set BEFORE the apt install below, since
+	# installing btrfs-progs fires update-initramfs via its dpkg trigger.
+	echo "MODULES=most" >"$ROOTFS/etc/initramfs-tools/conf.d/coordinator-modules"
+
+	# auto_initramfs must already be on for update-initramfs's hook to emit the
+	# firmware-named initramfs; step 6 writes it, but set it now so the hook that
+	# runs inside this chroot sees it too.
+	if ! grep -q '^auto_initramfs=1' "$BOOTSTAGE/config.txt"; then
+		printf '\n# btrfs root needs an initramfs to modprobe btrfs before mount\nauto_initramfs=1\n' \
+			>>"$BOOTSTAGE/config.txt"
+	fi
+
+	# btrfs-progs provides `btrfs` + the initramfs hook that pulls the module in.
+	# RPi OS Lite does not ship it by default, so install it (needs network).
+	chroot "$ROOTFS" /bin/bash -eu -c '
+		export DEBIAN_FRONTEND=noninteractive
+		apt-get update -qq
+		apt-get install -y -qq btrfs-progs
+		update-initramfs -c -k all
+	'
+
+	# Confirm an initramfs was actually produced (glob, not ls|grep).
+	echo "== initramfs artifacts now in bootfs: =="
+	shopt -s nullglob
+	local initrds=("$BOOTSTAGE"/initramfs*)
+	shopt -u nullglob
+	[ "${#initrds[@]}" -gt 0 ] || {
+		echo "!! no initramfs* produced -- boot WILL fail; see writeup" >&2
+		exit 1
+	}
+	ls -l "${initrds[@]}"
+
+	# tear the chroot binds down now (deepest-first) before we touch the rootfs.
+	for m in dev/pts dev sys proc boot/firmware; do
+		umount "$ROOTFS/$m" 2>/dev/null || true
+		MOUNTS=("${MOUNTS[@]/$ROOTFS\/$m/}")
+	done
+}
+
+# =============================================================================
+# 4. build the target image: partition, FAT boot, btrfs via assemble-btrfs.sh
+# =============================================================================
+build_target() {
+	# Size = boot + rootfs footprint + slack, rounded up to a whole MiB.
+	local used_mb total_mb
+	used_mb="$(du -sm --apparent-size "$ROOTFS" | cut -f1)"
+	total_mb=$((BOOT_MB + used_mb + SLACK_MB))
+	echo "== target image: ${total_mb} MiB (boot ${BOOT_MB} + rootfs ${used_mb} + slack ${SLACK_MB}) =="
+	rm -f "$OUT_IMG"
+	truncate -s "${total_mb}M" "$OUT_IMG"
+
+	# MBR: p1 FAT32 (primary, lba) then p2 filling the rest. A fixed MBR disk id
+	# makes the PARTUUIDs deterministic across rebuilds (root=PARTUUID in cmdline).
+	echo "== partitioning (MBR) =="
+	parted -s "$OUT_IMG" \
+		mklabel msdos \
+		mkpart primary fat32 4MiB "$((4 + BOOT_MB))MiB" \
+		mkpart primary "$((4 + BOOT_MB))MiB" 100% \
+		set 1 lba on
+	# Stamp a stable disk identifier (-> PARTUUID prefix). 'c0dec0de' is a marker.
+	sfdisk --disk-id "$OUT_IMG" 0xc0dec0de
+
+	echo "== loop-attaching target =="
+	DST_LOOP="$(losetup --find --show -P "$OUT_IMG")"
+	local p1="${DST_LOOP}p1" p2="${DST_LOOP}p2"
+	echo "   $DST_LOOP (p1=$p1 boot, p2=$p2 root)"
+
+	# p1: FAT32 labelled 'bootfs' -- assemble-btrfs.sh's fstab mounts
+	# /boot/firmware by LABEL=bootfs, so the label must match (reconciliation).
+	echo "== mkfs.vfat -F32 -n bootfs $p1 =="
+	mkfs.vfat -F 32 -n bootfs "$p1" >/dev/null
+
+	# Resolve the PARTUUIDs we now need for the cmdline fixup.
+	local boot_partuuid root_partuuid
+	boot_partuuid="$(blkid -s PARTUUID -o value "$p1")"
+	root_partuuid="$(blkid -s PARTUUID -o value "$p2")"
+	echo "   boot PARTUUID=$boot_partuuid  root PARTUUID=$root_partuuid"
+
+	# Fix up the staged boot config BEFORE we copy it onto p1.
+	fixup_bootconfig "$root_partuuid"
+
+	# Copy the (fixed-up) boot partition contents onto the new FAT p1.
+	echo "== copy bootfs -> $p1 =="
+	local nboot="$BUILD/n-boot"
+	mkdir -p "$nboot"
+	mount "$p1" "$nboot"
+	track_mount "$nboot"
+	rsync -aHX "$BOOTSTAGE"/ "$nboot"/
+	umount "$nboot" && MOUNTS=("${MOUNTS[@]/$nboot/}")
+
+	# p2: hand off to the already-verified subvolume assembly. It mkfs.btrfs's
+	# the device, creates the six subvols, populates them from $ROOTFS, writes
+	# @/etc/fstab (LABEL=bootfs for /boot/firmware) and drops cmdline.fragment +
+	# fstab.generated into $BUILD for reference.
+	echo "== assemble-btrfs.sh $ROOTFS $p2 =="
+	"$HERE/assemble-btrfs.sh" "$ROOTFS" "$p2" "$BUILD"
+
+	losetup -d "$DST_LOOP"
+	DST_LOOP=""
+}
+
+# =============================================================================
+# 5. cmdline.txt / config.txt fixups
+#    cmdline: point root= at the new btrfs partition by PARTUUID and add the
+#    btrfs root flags; drop the ext4/fsck/firstboot bits that don't apply.
+#    config: auto_initramfs already handled in step 3.
+# =============================================================================
+fixup_bootconfig() {
+	local root_partuuid="$1"
+	local cmd="$BOOTSTAGE/cmdline.txt"
+	[ -f "$cmd" ] || {
+		echo "no $cmd" >&2
+		exit 1
+	}
+
+	echo "== cmdline.txt BEFORE:"
+	cat "$cmd"
+
+	# cmdline.txt is a single space-separated line. Rewrite it token-by-token so
+	# we are robust to whatever exact set the vendor shipped:
+	#   - replace root=...            -> root=PARTUUID=<new p2>
+	#   - drop rootfstype=ext4        (we append rootfstype=btrfs)
+	#   - drop fsck.repair=...        (btrfs is not fsck'd at boot)
+	#   - drop init=...sys-mods...    (firstboot/resize expects ext4 -> would fail)
+	#   - drop init_resize / resize2fs bits for the same reason
+	# then append the btrfs root flags (matching assemble's cmdline.fragment).
+	local out=() tok
+	# shellcheck disable=SC2013  # single-line file; word-splitting is intended
+	for tok in $(cat "$cmd"); do
+		case "$tok" in
+		root=*) out+=("root=PARTUUID=$root_partuuid") ;;
+		rootfstype=*) : ;; # replaced below
+		fsck.repair=*) : ;;
+		init=/usr/lib/raspberrypi-sys-mods/*) : ;;
+		init_resize*) : ;;
+		*) out+=("$tok") ;;
+		esac
+	done
+	out+=("rootfstype=btrfs" "rootflags=subvol=@")
+	printf '%s ' "${out[@]}" | sed 's/ $//' >"$cmd"
+	printf '\n' >>"$cmd"
+
+	echo "== cmdline.txt AFTER:"
+	cat "$cmd"
+	echo "== config.txt btrfs-relevant lines:"
+	grep -nE 'auto_initramfs|initramfs' "$BOOTSTAGE/config.txt" || true
+}
+
+# =============================================================================
+# 6. report
+# =============================================================================
+report() {
+	echo
+	echo "======================================================================"
+	echo "built: $OUT_IMG"
+	ls -lh "$OUT_IMG"
+	echo "---- sfdisk -d ----"
+	sfdisk -d "$OUT_IMG"
+	echo "---- generated fstab (from assemble) ----"
+	cat "$BUILD/fstab.generated" 2>/dev/null || true
+	echo "======================================================================"
+}
+
+main() {
+	require_root
+	require_tools
+	fetch_source
+	extract_source
+	regenerate_initramfs
+	build_target
+	report
+}
+
+main "$@"
