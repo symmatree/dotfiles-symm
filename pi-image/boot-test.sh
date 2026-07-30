@@ -81,7 +81,9 @@ echo "   kernel=$(basename "$KERNEL") initrd=$(basename "$INITRD") root=PARTUUID
 
 # ---- boot under -M virt with the image as a virtio disk ----------------------
 echo "== booting qemu-system-aarch64 -M virt (serial -> $SERIAL, ${TIMEOUT}s cap) =="
-APPEND="root=PARTUUID=$ROOT_PARTUUID rootfstype=btrfs rootflags=subvol=@ console=ttyAMA0 rw rootwait"
+# root=/dev/vda2 under -M virt (see header): tests the btrfs subvol=@ mount itself,
+# not by-partuuid resolution. ROOT_PARTUUID above is echoed for reference only.
+APPEND="root=/dev/vda2 rootfstype=btrfs rootflags=subvol=@ console=ttyAMA0 rw rootwait"
 timeout "$TIMEOUT" qemu-system-aarch64 \
 	-M virt -cpu cortex-a72 -m 1024 -smp 2 \
 	-kernel "$WORK/kernel" -initrd "$WORK/initrd" \

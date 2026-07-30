@@ -53,6 +53,9 @@ jobs:
         shell: "bash"
         run: |
           set -euo pipefail
+          # build-image.sh runs as root, so .build is root-owned; take it back so
+          # this (non-sudo) step and the artifact upload can read/write it.
+          sudo chown -R "$(id -u):$(id -g)" pi-image/.build
           shopt -s nullglob
           imgs=(pi-image/.build/coordinator-pi-*.img)
           xz -T0 -6 "${imgs[0]}"
