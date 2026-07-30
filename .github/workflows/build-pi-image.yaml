@@ -1,0 +1,76 @@
+name: "build-pi-image"
+
+# Convert the official Raspberry Pi OS Lite (Bookworm, arm64) image into the
+# coordinator btrfs-subvolume layout and publish the flashable .img as an
+# artifact. MUST run on an arm64 runner: the build loop-mounts + mkfs.btrfs
+# (needs a btrfs-capable kernel) and chroots the arm64 rootfs natively to
+# regenerate the initramfs. Neither is possible on the x86 notebook host.
+on:
+  workflow_dispatch: {}
+  push:
+    paths:
+      - "pi-image/**"
+      - ".github/workflows/build-pi-image.yaml"
+
+permissions:
+  contents: "read"
+
+jobs:
+  build:
+    runs-on: "ubuntu-24.04-arm"
+    timeout-minutes: 60
+    steps:
+      - uses: "actions/checkout@v6"
+
+      - name: "Install build deps"
+        shell: "bash"
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            btrfs-progs dosfstools xz-utils parted util-linux rsync \
+            qemu-system-arm qemu-utils
+
+      - name: "Build image"
+        shell: "bash"
+        run: |
+          set -euo pipefail
+          sudo pi-image/build-image.sh
+
+      - name: "Boot smoke-test (btrfs-subvol root mounts + pivots)"
+        id: "boottest"
+        shell: "bash"
+        # Non-fatal in v1: a clean PASS is strong signal, a non-PASS is reported
+        # but does not fail the build (the RPi kernel may not come up on -M virt).
+        # Flip to STRICT=1 once the boot path is proven to gate future regressions.
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          imgs=(pi-image/.build/coordinator-pi-*.img)
+          sudo pi-image/boot-test.sh "${imgs[0]}" || true
+
+      - name: "Compress image"
+        shell: "bash"
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          imgs=(pi-image/.build/coordinator-pi-*.img)
+          xz -T0 -6 "${imgs[0]}"
+          ls -lh pi-image/.build/*.img.xz
+
+      - name: "Upload image artifact"
+        uses: "actions/upload-artifact@v4"
+        with:
+          name: "coordinator-pi-btrfs-img"
+          path: "pi-image/.build/*.img.xz"
+          if-no-files-found: "error"
+          retention-days: 14
+
+      - name: "Upload boot-test serial log"
+        if: "success() || failure()"
+        uses: "actions/upload-artifact@v4"
+        with:
+          name: "boot-serial-log"
+          path: "pi-image/.build/boot-serial.log"
+          if-no-files-found: "ignore"
+          retention-days: 14
