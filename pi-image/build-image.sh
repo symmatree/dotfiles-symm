@@ -166,6 +166,14 @@ regenerate_initramfs() {
 		echo "virtio_scsi"
 	} >>"$ROOTFS/etc/initramfs-tools/modules"
 
+	# mkinitramfs's default MODULES=dep introspects the *running* root device to
+	# choose modules -- which fails inside a chroot ("failed to determine device
+	# for /"), aborting the btrfs-progs install trigger. MODULES=most bypasses that
+	# by bundling a broad module set (covers btrfs + virtio); the right choice for
+	# an offline/chroot image build. Must be set BEFORE the apt install below, since
+	# installing btrfs-progs fires update-initramfs via its dpkg trigger.
+	echo "MODULES=most" >"$ROOTFS/etc/initramfs-tools/conf.d/coordinator-modules"
+
 	# auto_initramfs must already be on for update-initramfs's hook to emit the
 	# firmware-named initramfs; step 6 writes it, but set it now so the hook that
 	# runs inside this chroot sees it too.
