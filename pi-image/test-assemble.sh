@@ -3,7 +3,7 @@
 # test-assemble.sh -- local, hardware-free proof of the coordinator btrfs
 # subvolume assembly. Builds a dummy rootfs, a ~1.5 GB loopback image, runs
 # assemble-btrfs.sh, then mounts the result PER THE GENERATED FSTAB and verifies:
-#   - all six subvolumes exist
+#   - all seven subvolumes exist
 #   - files land in the right subvol
 #   - /usr is mounted ro, and `mount -o remount,rw /usr` works
 #   - @data nests correctly under /var
@@ -92,10 +92,10 @@ findmnt -R "$MNT" || true
 # ---- 5. assertions ----------------------------------------------------------
 echo "### assertions"
 
-# 5a. all six subvolumes present
+# 5a. all seven subvolumes present
 SUBVOLS="$(btrfs subvolume list "$MNT" | awk '{print $NF}' | sort | tr '\n' ' ')"
 echo "  subvols found: $SUBVOLS"
-for want in @ @usr @var @home @data @snapshots; do
+for want in @ @usr @var @home @data @scratch @snapshots; do
 	case " $SUBVOLS " in
 	*" $want "*) pass "subvolume $want exists" ;;
 	*) fail "subvolume $want MISSING" ;;
@@ -183,6 +183,13 @@ mount -t btrfs -o "subvol=@var" "$LOOP" "$WORK/varmnt" 2>/dev/null && {
 	case "$ATTRS" in *C*) pass "@var/lib/docker is nodatacow (lsattr: $ATTRS)" ;; *) fail "docker dir not +C (lsattr: $ATTRS)" ;; esac
 	umount "$WORK/varmnt"
 }
+
+# 5i. /scratch is nodatacow (ephemeral WAL/sim; never snapshotted)
+SCR_OPTS="$(findmnt -rno OPTIONS "$MNT/scratch" 2>/dev/null || true)"
+case ",$SCR_OPTS," in
+*,nodatacow,*) pass "/scratch nodatacow (opts: $SCR_OPTS)" ;;
+*) fail "/scratch not nodatacow (opts: $SCR_OPTS)" ;;
+esac
 
 echo
 echo "### generated fstab:"

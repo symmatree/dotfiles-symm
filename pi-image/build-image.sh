@@ -19,8 +19,9 @@
 # Root/loop/mount/mkfs are all required, so run as root (CI: sudo).
 #
 # Usage:
-#   sudo ./build-image.sh [OUT_IMG]
-#     OUT_IMG  final image path (default: pi-image/.build/coordinator-pi-<date>.img)
+#   sudo ./build-image.sh [ROLE] [OUT_IMG]
+#     ROLE     device role -> pi-image/roles/<ROLE>.env  (default: coordinator)
+#     OUT_IMG  final image path (default: pi-image/.build/<ROLE>-pi-<date>.img)
 #
 # shellcheck disable=SC2015  # a few benign `cond && act || true` cleanup idioms
 set -euo pipefail
@@ -36,11 +37,29 @@ RPIOS_SHA256="62d025b9bc7ca0e1facfec74ae56ac13978b6745c58177f081d39fbb8041ed45"
 # ---- paths -------------------------------------------------------------------
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BUILD="$HERE/.build" # scratch + artifacts (gitignored)
+
+# ---- role selection ----------------------------------------------------------
+# ROLE picks pi-image/roles/<ROLE>.env, which sets the per-role knobs: DATA_MOUNT,
+# METADATA, and optionally CONFIG_APPEND + OVERLAY_ZIP_URL/OVERLAY_ZIP_SHA256. The
+# btrfs subvolume graph is shared across roles (coordinator#96); only these knobs
+# differ. Defaults to coordinator so existing no-arg callers are unchanged.
+ROLE="${1:-coordinator}"
+ROLE_ENV="$HERE/roles/$ROLE.env"
+[ -f "$ROLE_ENV" ] || {
+	echo "unknown role '$ROLE' (no $ROLE_ENV)" >&2
+	exit 1
+}
+# shellcheck source=/dev/null
+. "$ROLE_ENV"
+DATA_MOUNT="${DATA_MOUNT:-/var/lib/coordinator}"
+METADATA="${METADATA:-single}"
+export DATA_MOUNT METADATA # consumed by assemble-btrfs.sh
+
 DL="$BUILD/$(basename "$RPIOS_URL")"
 SRC_IMG="${DL%.xz}"       # decompressed vendor image
 ROOTFS="$BUILD/rootfs"    # vendor rootfs extracted here
 BOOTSTAGE="$BUILD/bootfs" # vendor /boot/firmware staged + fixed up here
-OUT_IMG="${1:-$BUILD/coordinator-pi-$(date +%Y%m%d).img}"
+OUT_IMG="${2:-$BUILD/${ROLE}-pi-$(date +%Y%m%d).img}"
 
 # Partition geometry of the target image.
 BOOT_MB=512   # FAT32 /boot/firmware
@@ -56,7 +75,7 @@ require_root() {
 require_tools() {
 	local miss=0 t
 	for t in xz curl sha256sum losetup mount umount rsync parted \
-		mkfs.vfat mkfs.btrfs blkid sfdisk chroot; do
+		mkfs.vfat mkfs.btrfs blkid sfdisk chroot unzip; do
 		command -v "$t" >/dev/null 2>&1 || {
 			echo "missing tool: $t" >&2
 			miss=1
@@ -130,6 +149,39 @@ extract_source() {
 	umount "$sroot" && MOUNTS=("${MOUNTS[@]/$sroot/}")
 	losetup -d "$SRC_LOOP"
 	SRC_LOOP=""
+}
+
+# =============================================================================
+# 2b. apply role-specific boot config: append config.txt lines and install any
+#     device-tree overlays (e.g. the PocketTerm panel). No-op for coordinator.
+#     Runs on the staged $BOOTSTAGE before the initramfs regen reads config.txt.
+# =============================================================================
+apply_role_bootfs() {
+	if [ -n "${CONFIG_APPEND:-}" ]; then
+		local ca="$HERE/$CONFIG_APPEND"
+		[ -f "$ca" ] || {
+			echo "CONFIG_APPEND not found: $ca" >&2
+			exit 1
+		}
+		echo "== append role config.txt ($ROLE) <- $CONFIG_APPEND =="
+		{
+			printf '\n'
+			cat "$ca"
+		} >>"$BOOTSTAGE/config.txt"
+	fi
+
+	if [ -n "${OVERLAY_ZIP_URL:-}" ]; then
+		: "${OVERLAY_ZIP_SHA256:?OVERLAY_ZIP_SHA256 required alongside OVERLAY_ZIP_URL}"
+		echo "== fetch + verify device-tree overlays: $OVERLAY_ZIP_URL =="
+		local zip="$BUILD/role-overlays.zip" ex="$BUILD/role-overlays"
+		curl -fL --retry 3 -o "$zip" "$OVERLAY_ZIP_URL"
+		echo "$OVERLAY_ZIP_SHA256  $zip" | sha256sum -c -
+		rm -rf "$ex"
+		mkdir -p "$ex" "$BOOTSTAGE/overlays"
+		unzip -oq "$zip" -d "$ex"
+		echo "== install *.dtbo -> bootfs/overlays =="
+		find "$ex" -name '*.dtbo' -exec cp -v {} "$BOOTSTAGE/overlays/" \;
+	fi
 }
 
 # =============================================================================
@@ -338,6 +390,7 @@ main() {
 	require_tools
 	fetch_source
 	extract_source
+	apply_role_bootfs
 	regenerate_initramfs
 	build_target
 	report

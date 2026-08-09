@@ -17,12 +17,12 @@
 #               defaults to the directory containing TARGET.
 #
 # What it does:
-#   mkfs.btrfs -m single  (SD write-amp: single metadata, no DUP)
-#   create @ @usr @var @home @data @snapshots
+#   mkfs.btrfs -m $METADATA  (single on SD, dup on NVMe -- per-medium knob)
+#   create @ @usr @var @home @data @scratch @snapshots
 #   populate each subvol from the right slice of $ROOTFS
 #   create the mountpoint dirs the fstab needs (incl. @data's nest under @var)
 #   chattr +C on @var/lib/docker  (CoW-on-CoW footgun for docker's overlay2)
-#   write /etc/fstab into @
+#   write /etc/fstab into @  (@data mounts at $DATA_MOUNT; @scratch nodatacow)
 #   emit the kernel cmdline fragment to $OUT_DIR/cmdline.fragment
 #
 # shellcheck disable=SC2015  # cleanup uses the benign `cond && act || true` idiom
@@ -38,6 +38,22 @@ OUT_DIR="${3:-$(dirname "$TARGET")}"
 	exit 1
 }
 mkdir -p "$OUT_DIR"
+
+# ---- role knobs (env; defaults = coordinator) -------------------------------
+# The subvolume graph is shared fleet-wide (coordinator#96 "one btrfs layout,
+# per-role knobs"); only these differ between roles/media:
+#   DATA_MOUNT  where the @data subvol mounts (coordinator: /var/lib/coordinator,
+#               pocketterm: /var/lib/store). Must live under /var (it nests in @var).
+#   METADATA    mkfs.btrfs metadata profile: single on SD, dup on NVMe.
+DATA_MOUNT="${DATA_MOUNT:-/var/lib/coordinator}"
+METADATA="${METADATA:-single}"
+case "$DATA_MOUNT" in
+/var/*) DATA_UNDER_VAR="${DATA_MOUNT#/var}" ;; # e.g. /lib/coordinator, /lib/store
+*)
+	echo "DATA_MOUNT must be under /var (got '$DATA_MOUNT')" >&2
+	exit 1
+	;;
+esac
 
 # ---- resolve TARGET to a block device ---------------------------------------
 # mkfs/mount/blkid want a device. If TARGET is a regular file, back it with a
@@ -59,15 +75,15 @@ else
 	DEV="$LOOP"
 fi
 
-echo "== mkfs.btrfs -m single on $DEV =="
-mkfs.btrfs -f -m single -L rootfs "$DEV" >/dev/null
+echo "== mkfs.btrfs -m $METADATA on $DEV =="
+mkfs.btrfs -f -m "$METADATA" -L rootfs "$DEV" >/dev/null
 
 # ---- create subvolumes on the top-level -------------------------------------
 # Every subvolume lives directly under subvolid=5; the mount policy (which subvol
 # lands where) is expressed purely in fstab, not in the on-disk nesting.
 mount -o subvolid=5 "$DEV" "$TOP"
 
-for sv in @ @usr @var @home @data @snapshots; do
+for sv in @ @usr @var @home @data @scratch @snapshots; do
 	echo "== btrfs subvolume create $sv =="
 	btrfs subvolume create "$TOP/$sv" >/dev/null
 done
@@ -92,24 +108,27 @@ echo "== populate @usr =="
 echo "== populate @home =="
 [ -d "$ROOTFS/home" ] && "${RS[@]}" "$ROOTFS/home"/ "$TOP/@home"/
 
-echo "== populate @var (excluding lib/coordinator, which is @data) =="
-[ -d "$ROOTFS/var" ] && "${RS[@]}" --exclude='/lib/coordinator/***' \
+echo "== populate @var (excluding ${DATA_UNDER_VAR}, which is @data) =="
+[ -d "$ROOTFS/var" ] && "${RS[@]}" --exclude="${DATA_UNDER_VAR}/***" \
 	"$ROOTFS/var"/ "$TOP/@var"/
 
-echo "== populate @data from /var/lib/coordinator =="
-[ -d "$ROOTFS/var/lib/coordinator" ] &&
-	"${RS[@]}" "$ROOTFS/var/lib/coordinator"/ "$TOP/@data"/
+echo "== populate @data from $DATA_MOUNT (if present in the rootfs) =="
+[ -d "$ROOTFS$DATA_MOUNT" ] &&
+	"${RS[@]}" "$ROOTFS$DATA_MOUNT"/ "$TOP/@data"/
+
+# @scratch is ephemeral (WAL/sim); it ships empty and is never populated.
 
 # ---- create the mountpoint directories the fstab needs ----------------------
 # A subvol mounted at /X needs the dir /X to exist in whatever subvol owns that
 # path. @usr/@var/@home/.snapshots/boot/firmware/tmp are all children of @.
 echo "== create mountpoints in @ =="
-mkdir -p "$TOP/@"/{usr,var,home,tmp,boot/firmware,.snapshots}
+mkdir -p "$TOP/@"/{usr,var,home,tmp,scratch,boot/firmware,.snapshots}
 
-# @data mounts at /var/lib/coordinator, i.e. INSIDE @var. So its mountpoint dir
-# must exist in @var, not @. Same for docker's data-root.
+# @data mounts under /var (e.g. /var/lib/coordinator or /var/lib/store), i.e.
+# INSIDE @var -- so its mountpoint dir must exist in @var, not @. Same for
+# docker's data-root.
 echo "== create nested mountpoints in @var =="
-mkdir -p "$TOP/@var"/lib/coordinator
+mkdir -p "$TOP/@var${DATA_UNDER_VAR}"
 mkdir -p "$TOP/@var"/lib/docker
 
 # ---- chattr +C on docker's data-root (CoW-on-CoW footgun) -------------------
@@ -120,15 +139,15 @@ chattr +C "$TOP/@var/lib/docker"
 
 # ---- write /etc/fstab into @ ------------------------------------------------
 # One btrfs filesystem => one UUID shared by every subvol; the subvol= option is
-# what differentiates the mounts. Order matters for `mount -a`: /var before
-# /var/lib/coordinator so the nest point exists first.
+# what differentiates the mounts. Order matters for `mount -a`: /var before the
+# @data mount ($DATA_MOUNT) so the nest point exists first.
 UUID="$(blkid -o value -s UUID "$DEV")"
 FSTAB="$TOP/@/etc/fstab"
 mkdir -p "$TOP/@/etc"
 
 echo "== write /etc/fstab (UUID=$UUID) =="
 {
-	echo "# coordinator SD btrfs subvolume layout (coordinator#96 / #41)"
+	echo "# fleet btrfs subvolume layout (coordinator#96 / #41)"
 	echo "# generated by assemble-btrfs.sh -- one btrfs FS, subvols differentiate mounts"
 	# btrfs is self-consistent (CoW) and is not fsck'd at boot, so the pass field is 0
 	# on every btrfs line (the ext4-style 1/2 passes don't apply).
@@ -136,7 +155,8 @@ echo "== write /etc/fstab (UUID=$UUID) =="
 	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/usr" "btrfs" "noatime,ro,subvol=@usr"
 	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/var" "btrfs" "noatime,compress=zstd,subvol=@var"
 	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/home" "btrfs" "noatime,compress=zstd,subvol=@home"
-	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/var/lib/coordinator" "btrfs" "noatime,compress=zstd,subvol=@data"
+	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "$DATA_MOUNT" "btrfs" "noatime,compress=zstd,subvol=@data"
+	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/scratch" "btrfs" "noatime,nodatacow,subvol=@scratch"
 	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/.snapshots" "btrfs" "noatime,subvol=@snapshots"
 	# FAT firmware partition -- fstab line only for the spike (no FAT part here).
 	# In the real image this is the boot partition's UUID/label, mounted ro.
