@@ -1,8 +1,8 @@
 name: "build-pi-image"
 
 # Convert the official Raspberry Pi OS Lite (Bookworm, arm64) image into the
-# coordinator btrfs-subvolume layout and publish the flashable .img as an
-# artifact. MUST run on an arm64 runner: the build loop-mounts + mkfs.btrfs
+# fleet btrfs-subvolume layout (per-role, via the matrix below) and publish each
+# flashable .img as an artifact. MUST run on an arm64 runner: the build loop-mounts + mkfs.btrfs
 # (needs a btrfs-capable kernel) and chroots the arm64 rootfs natively to
 # regenerate the initramfs. Neither is possible on the x86 notebook host.
 on:
@@ -19,6 +19,10 @@ jobs:
   build:
     runs-on: "ubuntu-24.04-arm"
     timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        role: ["coordinator", "pocketterm"]
     steps:
       - uses: "actions/checkout@v6"
 
@@ -28,14 +32,14 @@ jobs:
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
-            btrfs-progs dosfstools xz-utils parted util-linux rsync \
+            btrfs-progs dosfstools xz-utils parted util-linux rsync unzip \
             qemu-system-arm qemu-utils
 
       - name: "Build image"
         shell: "bash"
         run: |
           set -euo pipefail
-          sudo pi-image/build-image.sh
+          sudo pi-image/build-image.sh "${{ matrix.role }}"
 
       - name: "Boot smoke-test (btrfs-subvol root mounts + pivots)"
         id: "boottest"
@@ -46,7 +50,7 @@ jobs:
         run: |
           set -euo pipefail
           shopt -s nullglob
-          imgs=(pi-image/.build/coordinator-pi-*.img)
+          imgs=(pi-image/.build/${{ matrix.role }}-pi-*.img)
           sudo pi-image/boot-test.sh "${imgs[0]}" || true
 
       - name: "Compress image"
@@ -57,15 +61,15 @@ jobs:
           # this (non-sudo) step and the artifact upload can read/write it.
           sudo chown -R "$(id -u):$(id -g)" pi-image/.build
           shopt -s nullglob
-          imgs=(pi-image/.build/coordinator-pi-*.img)
+          imgs=(pi-image/.build/${{ matrix.role }}-pi-*.img)
           xz -T0 -6 "${imgs[0]}"
-          ls -lh pi-image/.build/coordinator-pi-*.img.xz
+          ls -lh pi-image/.build/${{ matrix.role }}-pi-*.img.xz
 
       - name: "Upload image artifact"
         uses: "actions/upload-artifact@v4"
         with:
-          name: "coordinator-pi-btrfs-img"
-          path: "pi-image/.build/coordinator-pi-*.img.xz"
+          name: "${{ matrix.role }}-pi-btrfs-img"
+          path: "pi-image/.build/${{ matrix.role }}-pi-*.img.xz"
           if-no-files-found: "error"
           include-hidden-files: true
           retention-days: 14
@@ -74,7 +78,7 @@ jobs:
         if: "success() || failure()"
         uses: "actions/upload-artifact@v4"
         with:
-          name: "boot-serial-log"
+          name: "boot-serial-log-${{ matrix.role }}"
           path: "pi-image/.build/boot-serial.log"
           if-no-files-found: "ignore"
           include-hidden-files: true

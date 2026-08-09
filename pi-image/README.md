@@ -21,6 +21,23 @@ it does not restate the design.
   `@var` / `@home` / `@data` layout can't be expressed there, so the eventual scratch build is
   **mmdebstrap** arm64 rootfs -> `assemble-btrfs.sh` -> **genimage**.
 
+## Roles
+
+One shared btrfs subvolume graph; per-role **knobs** (coordinator
+[#96](https://github.com/symmatree/coordinator/issues/96) "one layout, per-role
+knobs"). `build-image.sh <role>` sources `roles/<role>.env`:
+
+| knob | `coordinator` | `pocketterm` |
+|------|---------------|--------------|
+| `DATA_MOUNT` (where `@data` mounts) | `/var/lib/coordinator` (captures) | `/var/lib/store` (bulk store → NAS) |
+| `METADATA` (`mkfs.btrfs -m`) | `single` (SD) | `dup` (NVMe) |
+| `CONFIG_APPEND` | — | `roles/pocketterm/config.append.txt` (display/kbd/PCIe) |
+| `OVERLAY_ZIP_URL` | — | Waveshare 3.5" panel `.dtbo` (sha-pinned) |
+
+The subvolumes (`@ @usr @var @home @data @scratch @snapshots`), ro-`/usr`, and the
+btrfs-in-initramfs regen are **identical across roles**. Add a role by dropping a
+new `roles/<name>.env` and adding it to the matrix in `build-pi-image.yaml`.
+
 ## Pieces
 
 | file | what | status |
@@ -58,7 +75,7 @@ and ships btrfs as a *module*, so it sets `auto_initramfs=1`, adds `btrfs` to th
 ```bash
 # Raspberry Pi Imager: "Use custom" -> select the .img.xz directly (it reads xz).
 # Or from a shell:
-xzcat coordinator-pi-<date>.img.xz | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
+xzcat <role>-pi-<date>.img.xz | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
 ```
 
 The image ships `root=PARTUUID=<btrfs p2> rootfstype=btrfs rootflags=subvol=@` and `auto_initramfs=1`.

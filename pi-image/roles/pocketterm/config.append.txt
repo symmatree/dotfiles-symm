@@ -1,0 +1,20 @@
+# --- PocketTerm35 (pipboy) role additions ---
+# Appended verbatim to config.txt by pi-image/build-image.sh. The explicit [all]
+# header is load-bearing: a stock config.txt can end inside a [cm5] section, and a
+# Pi 5 *Model B* ignores [cm5] -- which is exactly how the keyboard and the RP2040
+# HID (backlight/brightness) failed to enumerate on the first hand-built card
+# (facts/PocketTerm35, tiles #599). Forcing [all] here guarantees these lines are
+# unconditional regardless of where the vendor file left off.
+[all]
+
+# 3.5" 640x480 IPS panel, Pi 5 variant. Overlay ships in 3.5HDMI_E_DTBO.zip and is
+# dropped into /boot/firmware/overlays/ by the build. Touch rides I2C on GPIO2/3/4.
+dtparam=i2c_arm=on
+dtoverlay=waveshare-35dpi-5b
+
+# USB-OTG host mode so the physical keyboard + the RP2040 HID enumerate.
+dtoverlay=dwc2,dr_mode=host
+
+# PCIe x1 for the Board (E) NVMe carrier. Stay on Gen2 (the default); Gen3
+# (dtparam=pciex1_gen=3) is officially unstable on Pi 5.
+dtparam=pciex1
