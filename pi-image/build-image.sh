@@ -289,8 +289,8 @@ build_target() {
 	local p1="${DST_LOOP}p1" p2="${DST_LOOP}p2"
 	echo "   $DST_LOOP (p1=$p1 boot, p2=$p2 root)"
 
-	# p1: FAT32 labelled 'bootfs' -- assemble-btrfs.sh's fstab mounts
-	# /boot/firmware by LABEL=bootfs, so the label must match (reconciliation).
+	# p1: FAT32 labelled 'bootfs' (kept for humans). The real image's fstab mounts
+	# /boot/firmware by PARTUUID, not this label, so a stray 'bootfs' card can't mount here.
 	echo "== mkfs.vfat -F32 -n bootfs $p1 =="
 	mkfs.vfat -F 32 -n bootfs "$p1" >/dev/null
 
@@ -313,9 +313,12 @@ build_target() {
 	umount "$nboot" && MOUNTS=("${MOUNTS[@]/$nboot/}")
 
 	# p2: hand off to the already-verified subvolume assembly. It mkfs.btrfs's
-	# the device, creates the six subvols, populates them from $ROOTFS, writes
-	# @/etc/fstab (LABEL=bootfs for /boot/firmware) and drops cmdline.fragment +
+	# the device, creates the seven subvols, populates them from $ROOTFS, writes
+	# @/etc/fstab (/boot/firmware keyed by PARTUUID) and drops cmdline.fragment +
 	# fstab.generated into $BUILD for reference.
+	# assemble keys /boot/firmware off this PARTUUID (unique to this disk) so a
+	# stray stock 'bootfs'-labelled card can never be mounted there.
+	export BOOT_PARTUUID="$boot_partuuid"
 	echo "== assemble-btrfs.sh $ROOTFS $p2 =="
 	"$HERE/assemble-btrfs.sh" "$ROOTFS" "$p2" "$BUILD"
 
