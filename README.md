@@ -23,7 +23,7 @@ parallel reimplementations. Bring-up of the first such device (pipboy) is tracke
 [symmatree/tiles #599](https://github.com/symmatree/tiles/issues/599).
 
 These devices take **routine abrupt power loss** and are often **offline**. The resilient base they run
-is a **btrfs subvolume layout** (read-only `/usr`, read-write `/var` / `/home` / `/data`, snapshots — no
+is a **btrfs subvolume layout** (read-only `/usr` — ⚠️ *intended; not enforced as built, see coordinator #96*, read-write `/var` / `/home` / `/data`, snapshots — no
 overlay); the shared pattern is `facts/topics/power-unstable-pi.md` and the drone-coordinator specifics
 are [symmatree/coordinator #41](https://github.com/symmatree/coordinator/issues/41). Because that layout
 can't come from a stock flash, this repo is also the intended home for the **fleet image-build pipeline**
