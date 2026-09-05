@@ -35,15 +35,25 @@ knobs"). `build-image.sh <role>` sources `roles/<role>.env`:
 | `OVERLAY_ZIP_URL` | — | Waveshare 3.5" panel `.dtbo` (sha-pinned) |
 
 The subvolumes (`@ @usr @var @home @data @scratch @snapshots`), ro-`/usr`, and the
-btrfs-in-initramfs regen are **identical across roles**. Add a role by dropping a
+btrfs-in-initramfs regen are **identical across roles**.
+
+> [!NOTE]
+> ⚠️ **`ro`-`/usr` is not actually enforced as built** — the fstab (`/usr … ro`) and the assembly are
+> correct, but at boot `/usr` comes up `rw`: `@usr` shares the root btrfs *superblock*, so when
+> `systemd-remount-fs` remounts `/` rw the read-only flag on `/usr` is dropped, and a live `/usr` can't
+> be remounted `ro` ("busy"). Tracked as an open design question in coordinator
+> [#96](https://github.com/symmatree/coordinator/issues/96); full evidence in
+> `facts/topics/power-unstable-pi.md` → "Reality check".
+
+Add a role by dropping a
 new `roles/<name>.env` and adding it to the matrix in `build-pi-image.yaml`.
 
 ## Pieces
 
 | file | what | status |
 |------|------|--------|
-| `assemble-btrfs.sh` | lay a populated rootfs into the layout: `mkfs.btrfs -m single`, create `@ @usr @var @home @data @snapshots`, populate each from the right rootfs slice, `chattr +C` docker, write `/etc/fstab` + emit the cmdline fragment | **done, verified** |
-| `test-assemble.sh` | local proof: dummy rootfs -> loopback image -> assemble -> mount per the generated fstab -> assert (all six subvols, exclusive split, `ro`-`/usr` + `remount,rw`, `@data` nesting under `/var`, docker `+C`). Needs a btrfs-capable kernel + `sudo`. | done |
+| `assemble-btrfs.sh` | lay a populated rootfs into the layout: `mkfs.btrfs -m single`, create `@ @usr @var @home @data @scratch @snapshots`, populate each from the right rootfs slice, `chattr +C` docker, write `/etc/fstab` + emit the cmdline fragment | **done, verified** |
+| `test-assemble.sh` | local proof: dummy rootfs -> loopback image -> assemble -> mount per the generated fstab -> assert (all seven subvols, exclusive split, `ro`-`/usr` + `remount,rw` *of the assembled fstab* — note the **booted** `/usr` comes up `rw`, see [#96](https://github.com/symmatree/coordinator/issues/96), `@data` nesting under `/var`, docker `+C`). Needs a btrfs-capable kernel + `sudo`. | done |
 | `verify-in-vm.sh` | run `test-assemble.sh` inside a throwaway KVM guest -- for hosts whose kernel lacks btrfs (e.g. the Talos notebook host). | done |
 | `build-image.sh` | **convert path.** Download+verify the pinned official RPi OS Lite Bookworm arm64 image, extract its rootfs + boot partition, natively chroot the arm64 rootfs to regenerate the initramfs **with btrfs**, build a fresh MBR image (FAT `bootfs` p1 + btrfs p2 via `assemble-btrfs.sh`), fix up `cmdline.txt`/`config.txt`. arm64 + btrfs kernel only (CI: `ubuntu-24.04-arm`). | **v1, unproven boot** |
 | `boot-test.sh` | best-effort smoke test: pull kernel+initramfs from the built image, boot `qemu-system-aarch64 -M virt` with the image as a virtio disk, grep serial for a btrfs-root login/pivot. Non-fatal in v1 (`STRICT=1` to gate). | **v1** |
