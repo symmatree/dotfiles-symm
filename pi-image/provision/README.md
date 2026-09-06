@@ -19,12 +19,38 @@ Once, per machine:
 Copy-Item fleet.env.example fleet.env   # then fill it in
 ```
 
+Get the image from the `build-pi-image` run's artifacts and **extract the zip**. GitHub
+wraps every artifact in a zip, so what lands in your browser is
+`campod-pi-btrfs-img.zip` (~494 MB) containing `campod-pi-<YYYYMMDD>.img.xz` -- the
+artifact name carries no date, the file inside does (`build-image.sh` stamps it). Point
+the script at the inner `.img.xz`; rpi-imager reads `.xz` directly but not one that is
+still nested in a zip.
+
 Then per card, from an **elevated** PowerShell:
 
 ```powershell
-Get-Disk | Format-Table Number, FriendlyName, Size, BusType   # find the card, CHECK THE SIZE
-.\Flash-Card.ps1 -Hostname z-left-rear -Disk \\.\PhysicalDrive2 -Image .\pod-pi-20260906.img.xz
+Get-Disk | Format-Table Number, FriendlyName, Size, BusType
+.\Flash-Card.ps1 -Hostname z-left-rear -Disk 2 -Image $HOME\Downloads\campod-pi-20260906.img.xz
 ```
+
+`-Disk` takes the `Get-Disk` number (or a full `\\.\PhysicalDriveN`). That number is not
+stable across sessions and the failure mode is erasing the wrong drive, so the script
+re-resolves it, prints the make / size / bus type of the disk it is about to erase, and
+makes you retype the number. `-Force` skips the prompt.
+
+### Running it from a WSL mount
+
+`\\wsl.localhost\...` is a UNC path, which Windows puts in a remote zone by construction,
+so `RemoteSigned` refuses the script. `Unblock-File` does not help -- there is no
+mark-of-the-web tag to strip; the zone comes from the path. Bypass it per invocation
+rather than copying the script to a local drive, so what you run stays a checkout you can
+`git pull`:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\Flash-Card.ps1 -Hostname z-left-rear -Disk 2 -Image $HOME\Downloads\campod-pi-20260906.img.xz
+```
+
+The image does not need to sit next to the script -- leave it where the browser put it.
 
 `rpi-imager`'s CLI hardcodes `init_format = systemd` for any local file
 (`src/cli.cpp`), so `--first-run-script` reaches the same code path the GUI wizard uses,
