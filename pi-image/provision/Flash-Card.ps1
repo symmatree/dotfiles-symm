@@ -50,12 +50,20 @@ foreach ($line in Get-Content -LiteralPath $SecretsFile) {
 }
 $vals['HOSTNAME'] = $Hostname
 
+# An empty value would substitute silently and produce e.g. userconf 'pi' '' --
+# an empty password. Treat blank as absent so it is reported below with the rest.
+foreach ($k in @($vals.Keys)) { if ([string]::IsNullOrWhiteSpace($vals[$k])) { $vals.Remove($k) } }
+
 # --- render ------------------------------------------------------------------
 $template = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'firstrun.sh.template') -Raw
 foreach ($k in $vals.Keys) { $template = $template.Replace("__${k}__", $vals[$k]) }
 
+# Report EVERY missing key at once -- filling these in one error at a time is
+# needlessly tedious.
 $missing = [regex]::Matches($template, '__[A-Z_]+__') | ForEach-Object { $_.Value } | Sort-Object -Unique
-if ($missing) { throw "unsubstituted placeholders (empty or absent in ${SecretsFile}): $($missing -join ', ')" }
+if ($missing) {
+    throw "these are blank or absent in ${SecretsFile}: $($missing -join ', ')"
+}
 
 # Single quotes in the template are the shell's; a value containing one would
 # break out of its argument. None of these values legitimately contain one.
