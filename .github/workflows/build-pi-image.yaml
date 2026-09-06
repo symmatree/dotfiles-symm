@@ -10,6 +10,9 @@ on:
   push:
     paths:
       - "pi-image/**"
+      # provision/ is the Windows-side flashing tooling. It cannot affect the
+      # built image, so changes there must not trigger three arm64 image builds.
+      - "!pi-image/provision/**"
       - ".github/workflows/build-pi-image.yaml"
 
 permissions:
