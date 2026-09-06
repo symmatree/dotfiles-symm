@@ -1,0 +1,39 @@
+#!/bin/sh
+#
+# Per-unit first-boot personalisation for a fleet btrfs image (coordinator#96).
+#
+# RENDERED FILE -- do not edit a copy on an SD card. Edit
+# pi-image/provision/firstrun.sh.template and re-render with Flash-Card.ps1.
+#
+# How this runs: rpi-imager writes it to the FAT partition and appends
+#   systemd.run=/boot/firstrun.sh systemd.run_success_action=reboot systemd.unit=kernel-command-line.target
+# to cmdline.txt. On first boot the initramfs script imager_fixup (from
+# raspberrypi-sys-mods) rewrites /boot/ -> /boot/firmware/ here and in
+# cmdline.txt, then systemd runs this as PID 1's transient unit, then reboots.
+# It does NOT depend on init=/usr/lib/raspberrypi-sys-mods/firstboot, which
+# build-image.sh strips.
+#
+# Derived from what Raspberry Pi Imager's own wizard generates (harvested from a
+# "Raspberry Pi OS (Legacy, 64-bit) Lite" flash, init_format=systemd), with the
+# vendor's `else` fallback branches removed -- see provision/README.md for why.
+set +e
+
+CUSTOM=/usr/lib/raspberrypi-sys-mods/imager_custom
+
+"$CUSTOM" set_hostname '__HOSTNAME__'
+
+"$CUSTOM" enable_ssh -k '__SSH_PUBKEY__'
+
+/usr/lib/userconf-pi/userconf '__USERNAME__' '__PW_HASH__'
+
+"$CUSTOM" set_wlan '__WIFI_SSID__' '__WIFI_PSK__' '__WIFI_COUNTRY__'
+
+"$CUSTOM" set_keymap '__KEYMAP__'
+"$CUSTOM" set_timezone '__TIMEZONE__'
+
+# Self-cleanup. imager_fixup truncates the script at the line matching
+# /rm.*firstrun\.sh$/ and appends its own /boot/firmware/ equivalent, so this
+# line must keep ending in "firstrun.sh".
+rm -f /boot/firstrun.sh
+sed -i 's| systemd.run.*||g' /boot/cmdline.txt
+exit 0

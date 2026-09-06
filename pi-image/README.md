@@ -27,12 +27,13 @@ One shared btrfs subvolume graph; per-role **knobs** (coordinator
 [#96](https://github.com/symmatree/coordinator/issues/96) "one layout, per-role
 knobs"). `build-image.sh <role>` sources `roles/<role>.env`:
 
-| knob | `coordinator` | `pocketterm` |
-|------|---------------|--------------|
-| `DATA_MOUNT` (where `@data` mounts) | `/var/lib/coordinator` (captures) | `/var/lib/store` (bulk store → NAS) |
-| `METADATA` (`mkfs.btrfs -m`) | `single` (SD) | `dup` (NVMe) |
-| `CONFIG_APPEND` | — | `roles/pocketterm/config.append.txt` (display/kbd/PCIe) |
-| `OVERLAY_ZIP_URL` | — | Waveshare 3.5" panel `.dtbo` (sha-pinned) |
+| knob | `coordinator` | `campod` | `pocketterm` |
+|------|---------------|-------|--------------|
+| hardware | Pi 4B / SD | Zero 2 W / SD | Pi 5 / NVMe |
+| `DATA_MOUNT` (where `@data` mounts) | `/var/lib/coordinator` (captures) | `/var/lib/pod` (captures) | `/var/lib/store` (bulk store → NAS) |
+| `METADATA` (`mkfs.btrfs -m`) | `single` (SD) | `single` (SD) | `dup` (NVMe) |
+| `CONFIG_APPEND` | — | — | `roles/pocketterm/config.append.txt` (display/kbd/PCIe) |
+| `OVERLAY_ZIP_URL` | — | — | Waveshare 3.5" panel `.dtbo` (sha-pinned) |
 
 The subvolumes (`@ @usr @var @home @data @scratch @snapshots`), ro-`/usr`, and the
 btrfs-in-initramfs regen are **identical across roles**.
@@ -91,6 +92,36 @@ xzcat <role>-pi-<date>.img.xz | sudo dd of=/dev/sdX bs=4M status=progress conv=f
 The image ships `root=PARTUUID=<btrfs p2> rootfstype=btrfs rootflags=subvol=@` and `auto_initramfs=1`.
 If it does not come up, the boot config (cmdline/initramfs) is where to iterate -- the filesystem
 itself is verified.
+
+### Headless first boot
+
+The image is generic and secret-free: it has **no login** (the vendor `pi` account is
+`!`-locked in `/etc/shadow`), no SSH host keys, and no WiFi. Identity is injected per unit
+after the flash, touching **only the FAT partition** (coordinator#96).
+
+The vehicle is the vendor's own mechanism, which this image keeps working:
+
+1. A `firstrun.sh` is written to the FAT partition and
+   ` systemd.run=/boot/firstrun.sh systemd.run_success_action=reboot systemd.unit=kernel-command-line.target`
+   is appended to `cmdline.txt`.
+2. The initramfs script `imager_fixup` (from `raspberrypi-sys-mods`, present in the pinned
+   base and carried into our regenerated initramfs) reads `/boot/firmware` out of the root
+   fs's `/etc/fstab`, mounts it rw, and rewrites `/boot/` -> `/boot/firmware/` in both
+   `cmdline.txt` and the script's self-cleanup tail. It resolves our `PARTUUID=` spec fine.
+3. systemd runs the script: hostname -> SSH keys -> `userconf` rename (`usermod -m`, so
+   `~/.ssh` follows the home dir) -> `imager_custom set_wlan` (writes a NetworkManager
+   keyfile) -> self-delete -> reboot.
+
+This does **not** depend on `init=/usr/lib/raspberrypi-sys-mods/firstboot`, which
+`build-image.sh` strips (it runs `resize2fs`, which is meaningless on btrfs). `systemd.run=`
+is a systemd feature. Consequences of stripping it: `custom.toml` is **not** applied on this
+image (that is the `firstboot` script's job), and SSH host keys come from
+`regenerate_ssh_host_keys.service` instead (enabled in the base image, so still covered).
+
+Bookworm has no `wpa_supplicant.conf`-on-boot-partition path any more -- WiFi is a
+NetworkManager keyfile on the *root* filesystem -- so `firstrun.sh` is the only FAT-only way
+to preconfigure WiFi. `userconf.txt` and an empty `ssh` file still work for the user account
+and sshd, but cannot carry WiFi.
 
 ## Run the test
 

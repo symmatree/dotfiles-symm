@@ -166,7 +166,18 @@ echo "== write /etc/fstab (UUID=$UUID, boot=$BOOTFS_SPEC) =="
 	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/.snapshots" "btrfs" "noatime,subvol=@snapshots"
 	# FAT firmware partition -- fstab line only for the spike (no FAT part here).
 	# Real image keys this by PARTUUID (BOOTFS_SPEC) so no stray 'bootfs' card mounts here.
-	printf '%-42s  %-22s  %-5s  %s  0 2\n' "$BOOTFS_SPEC" "/boot/firmware" "vfat" "ro,nofail"
+	#
+	# Mounted rw, matching the vendor image (whose fstab is 'defaults'). It was 'ro'
+	# here for write-frugality, but nothing writes /boot/firmware in steady state, so
+	# ro bought no write reduction -- while breaking every consumer that does write it:
+	#   - Imager's firstrun.sh self-cleanup (rm firstrun.sh + strip systemd.run= from
+	#     cmdline.txt). Under ro both fail, the script still exits 0, and
+	#     systemd.run_success_action=reboot re-runs it forever -> boot loop.
+	#   - sshswitch.service   (set -e; rm "$FWLOC/ssh")      -> unit fails, sshd never on
+	#   - userconfig.service  (sh -e; rm userconf.txt)       -> Restart=on-failure loop
+	#   - rpi-eeprom-update.service, and kernel/firmware apt upgrades
+	# See coordinator#96 (headless provisioning).
+	printf '%-42s  %-22s  %-5s  %s  0 2\n' "$BOOTFS_SPEC" "/boot/firmware" "vfat" "defaults,nofail"
 	printf '%-42s  %-22s  %-5s  %s  0 0\n' "tmpfs" "/tmp" "tmpfs" "defaults,noatime,nosuid,nodev"
 } >"$FSTAB"
 
