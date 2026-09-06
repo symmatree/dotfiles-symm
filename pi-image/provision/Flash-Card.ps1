@@ -29,6 +29,10 @@
 .PARAMETER SecretsFile
     Defaults to fleet.env beside this script.
 
+.PARAMETER Imager
+    Path to rpi-imager.exe. Found automatically on PATH or in the usual install
+    roots; pass it explicitly if it lives somewhere else.
+
 .PARAMETER Force
     Skip the "about to erase this disk" confirmation.
 
@@ -41,7 +45,7 @@ param(
     [Parameter(Mandatory = $true)][string] $Disk,
     [Parameter(Mandatory = $true)][string] $Image,
     [string] $SecretsFile,
-    [string] $Imager = (Join-Path $env:ProgramFiles 'Raspberry Pi Imager\rpi-imager.exe'),
+    [string] $Imager,
     [switch] $Force
 )
 
@@ -58,6 +62,32 @@ if (-not $here) { $here = (Get-Location).Path }
 
 if (-not $SecretsFile) { $SecretsFile = Join-Path $here 'fleet.env' }
 $TemplateFile = Join-Path $here 'firstrun.sh.template'
+
+# Find rpi-imager rather than assuming an install path. Hardcoding
+# "$env:ProgramFiles\Raspberry Pi Imager" was a guess and it was wrong on a real
+# machine; the installer's location varies (per-user vs per-machine, x86 vs x64,
+# winget vs the .exe). Look on PATH first, then the usual roots, then say exactly
+# where we looked so -Imager can be pointed at it.
+if (-not $Imager) {
+    $onPath = Get-Command 'rpi-imager.exe' -ErrorAction SilentlyContinue
+    $candidates = @()
+    if ($onPath) { $candidates += $onPath.Source }
+    $candidates += @(
+        "$env:ProgramFiles\Raspberry Pi Imager\rpi-imager.exe"
+        "${env:ProgramFiles(x86)}\Raspberry Pi Imager\rpi-imager.exe"
+        "$env:LOCALAPPDATA\Programs\Raspberry Pi Imager\rpi-imager.exe"
+        "$env:LOCALAPPDATA\Raspberry Pi Imager\rpi-imager.exe"
+    ) | Where-Object { $_ -and $_ -notmatch '^\\' }   # drop entries where the env var was empty
+
+    $Imager = $candidates | Where-Object { $_ -and (Test-Path -LiteralPath $_) } | Select-Object -First 1
+    if (-not $Imager) {
+        throw ("rpi-imager.exe not found. Looked on PATH and at:`n  " +
+               (($candidates | Select-Object -Unique) -join "`n  ") +
+               "`nPass -Imager <path>. To locate it:`n" +
+               '  Get-ChildItem $env:ProgramFiles, ${env:ProgramFiles(x86)}, $env:LOCALAPPDATA -Recurse -Filter rpi-imager.exe -ErrorAction SilentlyContinue | Select-Object FullName')
+    }
+    Write-Host "imager   -> $Imager"
+}
 
 foreach ($p in @($SecretsFile, $TemplateFile, $Image, $Imager)) {
     if (-not (Test-Path -LiteralPath $p)) { throw "not found: $p" }
