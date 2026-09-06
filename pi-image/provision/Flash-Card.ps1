@@ -15,16 +15,22 @@
     Per-unit hostname, e.g. z-left-rear. The only value that differs per card.
 
 .PARAMETER Disk
-    Target device, e.g. \\.\PhysicalDrive2. Find it with:
-        Get-Disk | Format-Table Number, FriendlyName, Size, BusType
-    ...and read PhysicalDriveN off the Number column. CHECK THE SIZE. This
-    overwrites the disk with no further prompt.
+    Target device as \\.\PhysicalDriveN, or just the number N. There is no
+    stable "right" number -- it depends on what is plugged in -- so the script
+    resolves it with Get-Disk and shows you the make, size and bus type before
+    it writes anything. Confirm at that prompt, or pass -Force to skip it.
 
 .PARAMETER Image
-    Path to the built image, e.g. pod-pi-20260906.img.xz (rpi-imager reads .xz).
+    Path to the built image (rpi-imager reads .xz directly). The CI artifact
+    downloads as e.g. campod-pi-btrfs-img.zip -- EXTRACT IT FIRST; the file you
+    want is the campod-pi-<YYYYMMDD>.img.xz inside. Imager will not read an
+    .img.xz that is still inside a .zip.
+
+.PARAMETER Force
+    Skip the "about to erase this disk" confirmation.
 
 .EXAMPLE
-    .\Flash-Card.ps1 -Hostname z-left-rear -Disk \\.\PhysicalDrive2 -Image .\pod-pi-20260906.img.xz
+    .\Flash-Card.ps1 -Hostname z-left-rear -Disk 2 -Image ~\Downloads\campod-pi-20260906.img.xz
 #>
 [CmdletBinding()]
 param(
@@ -32,7 +38,8 @@ param(
     [Parameter(Mandatory = $true)][string] $Disk,
     [Parameter(Mandatory = $true)][string] $Image,
     [string] $SecretsFile = (Join-Path $PSScriptRoot 'fleet.env'),
-    [string] $Imager = (Join-Path $env:ProgramFiles 'Raspberry Pi Imager\rpi-imager.exe')
+    [string] $Imager = (Join-Path $env:ProgramFiles 'Raspberry Pi Imager\rpi-imager.exe'),
+    [switch] $Force
 )
 
 $ErrorActionPreference = 'Stop'
@@ -75,6 +82,29 @@ foreach ($k in $vals.Keys) {
 # would leave "#!/bin/sh`r" and the script would not execute.
 $rendered = Join-Path ([System.IO.Path]::GetTempPath()) "firstrun-$Hostname.sh"
 [System.IO.File]::WriteAllText($rendered, ($template -replace "`r`n", "`n"), (New-Object System.Text.UTF8Encoding($false)))
+
+# --- identify and confirm the target disk -------------------------------------
+# Getting this wrong erases the wrong drive, and the PhysicalDrive number is not
+# stable across sessions, so show what is actually there rather than trusting the
+# number that was typed.
+if ($Disk -match '^(?:\\\\\.\\PhysicalDrive)?(\d+)$') { $diskNumber = [int]$Matches[1] }
+else { throw "-Disk must be a number or \\.\PhysicalDriveN, got: $Disk" }
+$Disk = "\\.\PhysicalDrive$diskNumber"
+
+$target = Get-Disk -Number $diskNumber -ErrorAction SilentlyContinue
+if (-not $target) { throw "no disk with Number $diskNumber. Run: Get-Disk | Format-Table Number, FriendlyName, Size, BusType" }
+
+$sizeGB = [math]::Round($target.Size / 1GB, 1)
+Write-Host ""
+Write-Host "  ABOUT TO ERASE  $Disk" -ForegroundColor Red
+Write-Host "  $($target.FriendlyName)  ${sizeGB} GB  bus=$($target.BusType)  partitions=$($target.NumberOfPartitions)"
+Write-Host ""
+if ($target.BusType -notin @('USB', 'SD')) {
+    Write-Host "  NOTE: bus type is $($target.BusType), not USB or SD. Card readers are normally one of those." -ForegroundColor Yellow
+}
+if (-not $Force) {
+    if ((Read-Host "Type the disk number ($diskNumber) to confirm") -ne "$diskNumber") { throw 'aborted' }
+}
 
 Write-Host "rendered -> $rendered  (hostname=$Hostname)"
 Write-Host "flashing $Image -> $Disk ..." -ForegroundColor Yellow
