@@ -73,6 +73,8 @@ if (-not $Imager) {
     $candidates = @()
     if ($onPath) { $candidates += $onPath.Source }
     $candidates += @(
+        "$env:ProgramFiles\Raspberry Pi Ltd\Imager\rpi-imager.exe"
+        "${env:ProgramFiles(x86)}\Raspberry Pi Ltd\Imager\rpi-imager.exe"
         "$env:ProgramFiles\Raspberry Pi Imager\rpi-imager.exe"
         "${env:ProgramFiles(x86)}\Raspberry Pi Imager\rpi-imager.exe"
         "$env:LOCALAPPDATA\Programs\Raspberry Pi Imager\rpi-imager.exe"
@@ -154,9 +156,24 @@ if (-not $Force) {
 Write-Host "rendered -> $rendered  (hostname=$Hostname)"
 Write-Host "flashing $Image -> $Disk ..." -ForegroundColor Yellow
 
+# rpi-imager.exe is a GUI-subsystem binary, so the call operator does NOT wait
+# for it: `& $Imager ...` returns immediately, $LASTEXITCODE is never set, and the
+# finally block below deleted the firstrun script while the imager was still
+# starting -- which it then reported as "firstrun script does not exists".
+# Start-Process -Wait actually blocks and -PassThru gives a real exit code.
+#
+# -ArgumentList elements are not auto-quoted on Windows PowerShell 5.1, so quote
+# the paths here; any of them can contain spaces.
+$argList = @(
+    '--cli'
+    '--first-run-script'
+    "`"$rendered`""
+    "`"$Image`""
+    "`"$Disk`""
+)
 try {
-    & $Imager --cli --first-run-script $rendered $Image $Disk
-    if ($LASTEXITCODE -ne 0) { throw "rpi-imager exited $LASTEXITCODE" }
+    $proc = Start-Process -FilePath $Imager -ArgumentList $argList -Wait -PassThru -NoNewWindow
+    if ($proc.ExitCode -ne 0) { throw "rpi-imager exited $($proc.ExitCode)" }
     Write-Host "done: $Hostname" -ForegroundColor Green
 }
 finally {
