@@ -26,6 +26,9 @@
     want is the campod-pi-<YYYYMMDD>.img.xz inside. Imager will not read an
     .img.xz that is still inside a .zip.
 
+.PARAMETER SecretsFile
+    Defaults to fleet.env beside this script.
+
 .PARAMETER Force
     Skip the "about to erase this disk" confirmation.
 
@@ -37,14 +40,26 @@ param(
     [Parameter(Mandatory = $true)][string] $Hostname,
     [Parameter(Mandatory = $true)][string] $Disk,
     [Parameter(Mandatory = $true)][string] $Image,
-    [string] $SecretsFile = (Join-Path $PSScriptRoot 'fleet.env'),
+    [string] $SecretsFile,
     [string] $Imager = (Join-Path $env:ProgramFiles 'Raspberry Pi Imager\rpi-imager.exe'),
     [switch] $Force
 )
 
 $ErrorActionPreference = 'Stop'
 
-foreach ($p in @($SecretsFile, $Image, $Imager)) {
+# Resolve this script's own directory WITHOUT relying on $PSScriptRoot being
+# populated. It is empty in some invocation forms -- observed running
+# `powershell -ExecutionPolicy Bypass -File` against a \\wsl.localhost\... path --
+# and an empty $PSScriptRoot in a param() default fails at bind time, before any
+# of this script's own error handling can say anything useful.
+$here = $PSScriptRoot
+if (-not $here) { $here = if ($PSCommandPath) { Split-Path -Parent $PSCommandPath } else { $null } }
+if (-not $here) { $here = (Get-Location).Path }
+
+if (-not $SecretsFile) { $SecretsFile = Join-Path $here 'fleet.env' }
+$TemplateFile = Join-Path $here 'firstrun.sh.template'
+
+foreach ($p in @($SecretsFile, $TemplateFile, $Image, $Imager)) {
     if (-not (Test-Path -LiteralPath $p)) { throw "not found: $p" }
 }
 
@@ -62,7 +77,7 @@ $vals['HOSTNAME'] = $Hostname
 foreach ($k in @($vals.Keys)) { if ([string]::IsNullOrWhiteSpace($vals[$k])) { $vals.Remove($k) } }
 
 # --- render ------------------------------------------------------------------
-$template = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'firstrun.sh.template') -Raw
+$template = Get-Content -LiteralPath $TemplateFile -Raw
 foreach ($k in $vals.Keys) { $template = $template.Replace("__${k}__", $vals[$k]) }
 
 # Report EVERY missing key at once -- filling these in one error at a time is
