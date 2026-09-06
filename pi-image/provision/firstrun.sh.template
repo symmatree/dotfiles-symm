@@ -3,7 +3,7 @@
 # Per-unit first-boot personalisation for a fleet btrfs image (coordinator#96).
 #
 # RENDERED FILE -- do not edit a copy on an SD card. Edit
-# pi-image/provision/firstrun.sh.template and re-render with Flash-Pod.ps1.
+# pi-image/provision/firstrun.sh.template and re-render with Flash-Card.ps1.
 #
 # How this runs: rpi-imager writes it to the FAT partition and appends
 #   systemd.run=/boot/firstrun.sh systemd.run_success_action=reboot systemd.unit=kernel-command-line.target

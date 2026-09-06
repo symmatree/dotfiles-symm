@@ -22,7 +22,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        role: ["coordinator", "pod", "pocketterm"]
+        role: ["coordinator", "campod", "pocketterm"]
     steps:
       - uses: "actions/checkout@v6"
 

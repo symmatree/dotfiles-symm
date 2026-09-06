@@ -8,22 +8,22 @@ btrfs support, no WSL, and no block-device passthrough (coordinator#96).
 | file | what |
 |------|------|
 | `firstrun.sh.template` | the script rpi-imager drops on the FAT partition; placeholders `__LIKE_THIS__` |
-| `pods.env.example` | fleet-constant values. Copy to `pods.env` (gitignored) and fill in. **Secrets.** |
-| `Flash-Pod.ps1` | Windows: render + flash one card |
+| `fleet.env.example` | fleet-constant values. Copy to `fleet.env` (gitignored) and fill in. **Secrets.** |
+| `Flash-Card.ps1` | Windows: render + flash one card |
 
 ## Use
 
 Once, per machine:
 
 ```powershell
-Copy-Item pods.env.example pods.env   # then fill it in
+Copy-Item fleet.env.example fleet.env   # then fill it in
 ```
 
 Then per card, from an **elevated** PowerShell:
 
 ```powershell
 Get-Disk | Format-Table Number, FriendlyName, Size, BusType   # find the card, CHECK THE SIZE
-.\Flash-Pod.ps1 -PodName z-left-rear -Disk \\.\PhysicalDrive2 -Image .\pod-pi-20260906.img.xz
+.\Flash-Card.ps1 -Hostname z-left-rear -Disk \\.\PhysicalDrive2 -Image .\pod-pi-20260906.img.xz
 ```
 
 `rpi-imager`'s CLI hardcodes `init_format = systemd` for any local file
@@ -56,12 +56,12 @@ in play either. **Not tested on hardware.**
 
 ## Handling of secrets
 
-`pods.env` is gitignored and holds the only real secret in the flow: the WiFi PSK. The
+`fleet.env` is gitignored and holds the only real secret in the flow: the WiFi PSK. The
 SSH key is a **public** key, the hostname is not secret, and with key-only auth the
 password hash protects an account that has no reachable password login. Nothing here is
 baked into the image, so the image itself stays publishable.
 
-A rendered `firstrun.sh` **does** contain the PSK and the password hash. `Flash-Pod.ps1`
+A rendered `firstrun.sh` **does** contain the PSK and the password hash. `Flash-Card.ps1`
 writes it to a temp file and deletes it in a `finally` block. If you harvest a fresh one
 from the Imager GUI, note that an unmodified Imager script contains the PSK **twice** --
 once in the `imager_custom set_wlan` call and again in the `wpa_supplicant.conf` heredoc

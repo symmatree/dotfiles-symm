@@ -27,7 +27,7 @@ One shared btrfs subvolume graph; per-role **knobs** (coordinator
 [#96](https://github.com/symmatree/coordinator/issues/96) "one layout, per-role
 knobs"). `build-image.sh <role>` sources `roles/<role>.env`:
 
-| knob | `coordinator` | `pod` | `pocketterm` |
+| knob | `coordinator` | `campod` | `pocketterm` |
 |------|---------------|-------|--------------|
 | hardware | Pi 4B / SD | Zero 2 W / SD | Pi 5 / NVMe |
 | `DATA_MOUNT` (where `@data` mounts) | `/var/lib/coordinator` (captures) | `/var/lib/pod` (captures) | `/var/lib/store` (bulk store → NAS) |
