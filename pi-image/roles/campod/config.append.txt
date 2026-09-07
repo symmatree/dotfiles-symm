@@ -17,3 +17,20 @@ enable_uart=1
 # Leaves the hciuart service with nothing to attach to; it will fail harmlessly.
 # Disabling it belongs to the ansible layer, not to the image.
 dtoverlay=disable-bt
+
+# USB gadget networking (coordinator#24 Phase 3). The overlay has to come from
+# the image: it is device tree, read by the firmware at boot, and nothing in
+# userspace can substitute for it. Loading the dwc2/g_ether modules is the
+# ansible layer's job (/etc/modules-load.d/), which is why there is no matching
+# cmdline.txt change here -- and why this build needs no cmdline knob.
+#
+# dr_mode=otg rather than peripheral: with a plain micro-B cable (ID floating)
+# the controller comes up as a peripheral, which is what g_ether needs to bind;
+# with an OTG adapter (ID grounded) it comes up as a host. That covers the pod
+# talking to the coordinator AND the pod driving a hub, without this file having
+# to encode which one. Force it to "peripheral" or "host" if that flexibility is
+# not wanted.
+#
+# Note the vendor config.txt's existing dtoverlay=dwc2,dr_mode=host line is under
+# a [cm5] section and does not apply to a Zero 2 W.
+dtoverlay=dwc2,dr_mode=otg
