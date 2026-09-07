@@ -31,6 +31,26 @@ set -euo pipefail
 # vendor moved raspios to Trixie; 2025-05-13 is the last Bookworm Lite.) Pinned
 # by URL + sha256 so a rebuild is reproducible and a swapped-out upstream is
 # caught. To bump: change all three of URL/date/sha together.
+#
+# ---- BUMPING THE SUITE IS A CROSS-REPO CHANGE, NOT A LOCAL ONE ----------------
+# This pin is the fleet's OS suite, and the coordinator repo's containers track
+# it. coordinator#214 bumped containers/pod-camera to trixie on the reasoning
+# that "the host Pi OS is trixie" -- true of what the vendor currently ships,
+# false of what this file pins -- creating a host/container suite mismatch;
+# reverted in coordinator#219. If this pin moves, containers/pod-camera's
+# RPI_SUITE has to move in the same window.
+#
+# Two things recorded from that revert (coordinator#219's finding, not verified
+# here) for whoever does eventually move to Trixie:
+#   - Trixie's apt verifies signatures with Sequoia (sqv), whose policy has
+#     rejected SHA-1 since 2026-02-01. The raw archive.raspberrypi.com
+#     raspberrypi.gpg.key still carries 2012-era SHA-1 self-signatures, so the
+#     Pi archive reads as UNSIGNED -- which surfaces as what looks like a
+#     network fault, not a trust failure. The same key re-signed with SHA-512
+#     ships in raspberrypi-archive-keyring 2025.1+rpt1.
+#   - Bookworm is not holding anything back: its Pi archive has libcamera 0.5.2,
+#     and the ExposureTimeMode/AnalogueGainMode split landed in 0.4.
+# ------------------------------------------------------------------------------
 RPIOS_URL="https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz"
 RPIOS_SHA256="62d025b9bc7ca0e1facfec74ae56ac13978b6745c58177f081d39fbb8041ed45"
 
