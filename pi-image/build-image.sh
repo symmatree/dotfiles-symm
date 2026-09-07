@@ -40,16 +40,26 @@ set -euo pipefail
 # reverted in coordinator#219. If this pin moves, containers/pod-camera's
 # RPI_SUITE has to move in the same window.
 #
-# Two things recorded from that revert (coordinator#219's finding, not verified
-# here) for whoever does eventually move to Trixie:
-#   - Trixie's apt verifies signatures with Sequoia (sqv), whose policy has
-#     rejected SHA-1 since 2026-02-01. The raw archive.raspberrypi.com
-#     raspberrypi.gpg.key still carries 2012-era SHA-1 self-signatures, so the
-#     Pi archive reads as UNSIGNED -- which surfaces as what looks like a
-#     network fault, not a trust failure. The same key re-signed with SHA-512
-#     ships in raspberrypi-archive-keyring 2025.1+rpt1.
-#   - Bookworm is not holding anything back: its Pi archive has libcamera 0.5.2,
-#     and the ExposureTimeMode/AnalogueGainMode split landed in 0.4.
+# Two things recorded from that revert for whoever eventually moves to Trixie.
+# Both are coordinator#219's findings; they are NOT at the same evidence grade,
+# so treat them differently:
+#
+#   - REPRODUCED. Trixie's apt verifies signatures with Sequoia (sqv), whose
+#     policy has rejected SHA-1 since 2026-02-01. The raw
+#     archive.raspberrypi.com/debian/raspberrypi.gpg.key carries digest algo 2
+#     (SHA-1) self-signatures, so the Pi archive reads as UNSIGNED. Confirmed by
+#     reproducing the build failure on an arm64 CI runner --
+#       "Signing key on CF8A1AF5... is not bound ... SHA1 is not considered
+#        secure since 2026-02-01"
+#     -- and then by diffing the key packets: raspberrypi-archive-keyring
+#     2025.1+rpt1 ships the same fingerprint with digest algo 10 (SHA-512).
+#     The dangerous part is the presentation: an unsigned-repo failure here
+#     surfaces looking like a network fault, not a trust failure.
+#
+#   - READ, NOT RUN. Bookworm is not holding anything back: its Pi archive has
+#     libcamera 0.5.2 per the archive's Packages index, and the
+#     ExposureTimeMode/AnalogueGainMode split landed in 0.4. Nobody has executed
+#     that combination to confirm it.
 # ------------------------------------------------------------------------------
 RPIOS_URL="https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz"
 RPIOS_SHA256="62d025b9bc7ca0e1facfec74ae56ac13978b6745c58177f081d39fbb8041ed45"
