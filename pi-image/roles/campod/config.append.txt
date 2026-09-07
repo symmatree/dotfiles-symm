@@ -1,0 +1,19 @@
+# Serial console on GPIO 14/15 -- pins 8 (TXD) and 10 (RXD), ground on pin 6,
+# 115200 8N1. The field-debug path on a headless pod: no display, no keyboard.
+#
+# cmdline.txt already carries console=serial0,115200, but that alone produces
+# nothing on a Zero 2 W. The PL011 UART is wired to the Bluetooth modem, so
+# GPIO 14/15 get the *mini*-UART -- and the mini-UART is disabled unless
+# enable_uart=1. The symptom is total silence, which is indistinguishable from a
+# bad solder joint on the header. (Confirmed 2026-09-07: the first campod card
+# showed nothing on serial for exactly this reason.)
+enable_uart=1
+
+# disable-bt hands the real PL011 back to GPIO 14/15, and here it is necessary
+# rather than tidy: the mini-UART derives its baud rate from the VPU core clock,
+# and this image sets arm_boost=1, so that clock moves at runtime and mini-UART
+# output garbles. Bluetooth is not used on a camera pod.
+#
+# Leaves the hciuart service with nothing to attach to; it will fail harmlessly.
+# Disabling it belongs to the ansible layer, not to the image.
+dtoverlay=disable-bt
