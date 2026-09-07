@@ -1,0 +1,51 @@
+# Serial console on GPIO 14/15 -- pins 8 (TXD) and 10 (RXD), ground on pin 6,
+# 115200 8N1. The field-debug path on a headless pod: no display, no keyboard.
+#
+# cmdline.txt already carries console=serial0,115200, but that alone produces
+# nothing on a Zero 2 W. The PL011 UART is wired to the Bluetooth modem, so
+# GPIO 14/15 get the *mini*-UART -- and the mini-UART is disabled unless
+# enable_uart=1. The symptom is total silence, which is indistinguishable from a
+# bad solder joint on the header. (Confirmed 2026-09-07: the first campod card
+# showed nothing on serial for exactly this reason.)
+enable_uart=1
+
+# disable-bt hands the real PL011 back to GPIO 14/15, and here it is necessary
+# rather than tidy: the mini-UART derives its baud rate from the VPU core clock,
+# and this image sets arm_boost=1, so that clock moves at runtime and mini-UART
+# output garbles. Bluetooth is not used on a camera pod.
+#
+# Leaves the hciuart service with nothing to attach to; it will fail harmlessly.
+# Disabling it belongs to the ansible layer, not to the image.
+dtoverlay=disable-bt
+
+# USB gadget networking (coordinator#24 Phase 3). The overlay has to come from
+# the image: it is device tree, read by the firmware at boot, and nothing in
+# userspace can substitute for it. Loading the dwc2/g_ether modules is the
+# ansible layer's job (/etc/modules-load.d/), which is why there is no matching
+# cmdline.txt change here -- and why this build needs no cmdline knob.
+#
+# dr_mode=peripheral, explicitly. The topology is four campods on a USB hub whose
+# upstream goes to the coordinator, so the coordinator is the host and every pod
+# is a device on a downstream port -- never a host. "otg" would very likely land
+# in the same place (ID floating on a plain micro-B cable selects peripheral),
+# but that makes correct behaviour depend on cable wiring across eight units.
+# State it instead.
+#
+# Note the vendor config.txt's existing dtoverlay=dwc2,dr_mode=host line is under
+# a [cm5] section and does not apply to a Zero 2 W.
+dtoverlay=dwc2,dr_mode=peripheral
+
+# SPI, for the ADXL345 vibration sensors colocated with the camera
+# (coordinator#211, #218). Device tree, so it has to come from the image for the
+# same reason dwc2 does.
+#
+# Deliberately here rather than in the coordinator repo's pod ansible role, even
+# though the sensor is payload: /boot/firmware is FAT -- no checksums, no CoW --
+# on an SD card in a vehicle that loses power abruptly, and it is the one
+# filesystem the btrfs layout does not protect. Keeping the image as its only
+# writer is worth more than co-locating payload config with payload code. As a
+# bonus it removes a guaranteed reboot cycle from every fresh card's bootstrap.
+#
+# Inert when nothing is on the bus, so a campod without a sensor pays nothing --
+# which is why this can be fleet-wide rather than a per-unit knob.
+dtparam=spi=on

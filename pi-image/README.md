@@ -32,7 +32,7 @@ knobs"). `build-image.sh <role>` sources `roles/<role>.env`:
 | hardware | Pi 4B / SD | Zero 2 W / SD | Pi 5 / NVMe |
 | `DATA_MOUNT` (where `@data` mounts) | `/var/lib/coordinator` (captures) | `/var/lib/pod` (captures) | `/var/lib/store` (bulk store → NAS) |
 | `METADATA` (`mkfs.btrfs -m`) | `single` (SD) | `single` (SD) | `dup` (NVMe) |
-| `CONFIG_APPEND` | — | — | `roles/pocketterm/config.append.txt` (display/kbd/PCIe) |
+| `CONFIG_APPEND` | — | `roles/campod/config.append.txt` (serial console, dwc2) | `roles/pocketterm/config.append.txt` (display/kbd/PCIe) |
 | `OVERLAY_ZIP_URL` | — | — | Waveshare 3.5" panel `.dtbo` (sha-pinned) |
 
 The subvolumes (`@ @usr @var @home @data @scratch @snapshots`), ro-`/usr`, and the
