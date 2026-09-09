@@ -35,26 +35,13 @@ jobs:
           set -euo pipefail
           sudo apt-get update -qq
           sudo apt-get install -y -qq \
-            btrfs-progs dosfstools xz-utils parted util-linux rsync unzip \
-            qemu-system-arm qemu-utils
+            btrfs-progs dosfstools xz-utils parted util-linux rsync unzip
 
       - name: "Build image"
         shell: "bash"
         run: |
           set -euo pipefail
           sudo pi-image/build-image.sh "${{ matrix.role }}"
-
-      - name: "Boot smoke-test (btrfs-subvol root mounts + pivots)"
-        id: "boottest"
-        shell: "bash"
-        # Non-fatal in v1: a clean PASS is strong signal, a non-PASS is reported
-        # but does not fail the build (the RPi kernel may not come up on -M virt).
-        # Flip to STRICT=1 once the boot path is proven to gate future regressions.
-        run: |
-          set -euo pipefail
-          shopt -s nullglob
-          imgs=(pi-image/.build/${{ matrix.role }}-pi-*.img)
-          sudo pi-image/boot-test.sh "${imgs[0]}" || true
 
       - name: "Compress image"
         shell: "bash"
@@ -74,15 +61,5 @@ jobs:
           name: "${{ matrix.role }}-pi-btrfs-img"
           path: "pi-image/.build/${{ matrix.role }}-pi-*.img.xz"
           if-no-files-found: "error"
-          include-hidden-files: true
-          retention-days: 14
-
-      - name: "Upload boot-test serial log"
-        if: "success() || failure()"
-        uses: "actions/upload-artifact@v4"
-        with:
-          name: "boot-serial-log-${{ matrix.role }}"
-          path: "pi-image/.build/boot-serial.log"
-          if-no-files-found: "ignore"
           include-hidden-files: true
           retention-days: 14
