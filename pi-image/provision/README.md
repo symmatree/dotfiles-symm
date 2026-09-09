@@ -30,13 +30,29 @@ Then per card, from an **elevated** PowerShell:
 
 ```powershell
 Get-Disk | Format-Table Number, FriendlyName, Size, BusType
-.\Flash-Card.ps1 -Hostname z-left-rear -Disk 2 -Image $HOME\Downloads\campod-pi-20260906.img.xz
+.\Flash-Card.ps1 -Hostname pod-sw -Disk 2 -Image $HOME\Downloads\campod-pi-20260908.img.xz
 ```
 
 `-Disk` takes the `Get-Disk` number (or a full `\\.\PhysicalDriveN`). That number is not
 stable across sessions and the failure mode is erasing the wrong drive, so the script
 re-resolves it, prints the make / size / bus type of the disk it is about to erase, and
 makes you retype the number. `-Force` skips the prompt.
+
+### Hostnames
+
+Compass points, nose as north (coordinator#227). Four units today:
+
+    pod-ne   pod-se   pod-sw   pod-nw
+
+The scheme subdivides -- `ne` splits into `nne` + `ene` per
+[`rekon10/arm-pods.md`](https://github.com/symmatree/coordinator/blob/main/docs/rekon10/arm-pods.md)
+-- so an arm that later carries a second camera does not force renaming the first.
+
+The hostname is the **only** per-unit value in this flow; everything else in `fleet.env`
+is fleet-constant. The coordinator repo's `roles/pod` derives each unit's gadget-net MAC
+addresses from it at bootstrap (`02:` + five bytes of `sha256("campod-dev:" + hostname)`,
+and `campod-host:` for the other end), so nothing here has to carry them -- but it does
+mean a hostname change moves the addresses, consistently on both ends.
 
 ### Running it from a WSL mount
 
@@ -47,7 +63,7 @@ rather than copying the script to a local drive, so what you run stays a checkou
 `git pull`:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\Flash-Card.ps1 -Hostname z-left-rear -Disk 2 -Image $HOME\Downloads\campod-pi-20260906.img.xz
+powershell -ExecutionPolicy Bypass -File .\Flash-Card.ps1 -Hostname pod-sw -Disk 2 -Image $HOME\Downloads\campod-pi-20260908.img.xz
 ```
 
 The image does not need to sit next to the script -- leave it where the browser put it.
