@@ -34,11 +34,12 @@ set -euo pipefail
 #
 # ---- BUMPING THE SUITE IS A CROSS-REPO CHANGE, NOT A LOCAL ONE ----------------
 # This pin is the fleet's OS suite, and the coordinator repo's containers track
-# it. coordinator#214 bumped containers/pod-camera to trixie on the reasoning
-# that "the host Pi OS is trixie" -- true of what the vendor currently ships,
-# false of what this file pins -- creating a host/container suite mismatch;
-# reverted in coordinator#219. If this pin moves, containers/pod-camera's
-# RPI_SUITE has to move in the same window.
+# it. coordinator#214 bumped the camera container (then containers/pod-camera,
+# renamed to containers/campod-camera in coordinator#228) to trixie on the
+# reasoning that "the host Pi OS is trixie" -- true of what the vendor currently
+# ships, false of what this file pins -- creating a host/container suite
+# mismatch; reverted in coordinator#219. If this pin moves,
+# containers/campod-camera's RPI_SUITE has to move in the same window.
 #
 # Two things recorded from that revert for whoever eventually moves to Trixie.
 # Both are coordinator#219's findings; they are NOT at the same evidence grade,
