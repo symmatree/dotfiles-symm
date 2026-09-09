@@ -12,9 +12,9 @@
     raw device).
 
 .PARAMETER Hostname
-    Per-unit hostname, e.g. pod-sw. The only value that differs per card.
+    Per-unit hostname, e.g. campod-sw. The only value that differs per card.
     The fleet uses compass points with the nose as north (coordinator#227):
-    pod-ne, pod-se, pod-sw, pod-nw. The scheme subdivides -- ne splits into
+    campod-ne, campod-se, campod-sw, campod-nw. The scheme subdivides -- ne splits into
     nne + ene -- so an arm that later carries a second camera does not force
     renaming the first.
 
@@ -41,7 +41,7 @@
     Skip the "about to erase this disk" confirmation.
 
 .EXAMPLE
-    .\Flash-Card.ps1 -Hostname pod-sw -Disk 2 -Image ~\Downloads\campod-pi-20260908.img.xz
+    .\Flash-Card.ps1 -Hostname campod-sw -Disk 2 -Image ~\Downloads\campod-pi-20260908.img.xz
 #>
 [CmdletBinding()]
 param(

@@ -30,7 +30,7 @@ Then per card, from an **elevated** PowerShell:
 
 ```powershell
 Get-Disk | Format-Table Number, FriendlyName, Size, BusType
-.\Flash-Card.ps1 -Hostname pod-sw -Disk 2 -Image $HOME\Downloads\campod-pi-20260908.img.xz
+.\Flash-Card.ps1 -Hostname campod-sw -Disk 2 -Image $HOME\Downloads\campod-pi-20260908.img.xz
 ```
 
 `-Disk` takes the `Get-Disk` number (or a full `\\.\PhysicalDriveN`). That number is not
@@ -42,7 +42,12 @@ makes you retype the number. `-Force` skips the prompt.
 
 Compass points, nose as north (coordinator#227). Four units today:
 
-    pod-ne   pod-se   pod-sw   pod-nw
+    campod-ne   campod-se   campod-sw   campod-nw
+
+`campod-`, not `pod-`: a bare "pod" is hopelessly overloaded here -- it is a Kubernetes
+noun, it is this repo's ansible role name, and `rekon10/arm-pods.md` also uses it for the
+physical arm enclosure that holds one or two of these hosts. Three meanings, none of them
+the machine you are naming.
 
 The scheme subdivides -- `ne` splits into `nne` + `ene` per
 [`rekon10/arm-pods.md`](https://github.com/symmatree/coordinator/blob/main/docs/rekon10/arm-pods.md)
@@ -63,7 +68,7 @@ rather than copying the script to a local drive, so what you run stays a checkou
 `git pull`:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\Flash-Card.ps1 -Hostname pod-sw -Disk 2 -Image $HOME\Downloads\campod-pi-20260908.img.xz
+powershell -ExecutionPolicy Bypass -File .\Flash-Card.ps1 -Hostname campod-sw -Disk 2 -Image $HOME\Downloads\campod-pi-20260908.img.xz
 ```
 
 The image does not need to sit next to the script -- leave it where the browser put it.
