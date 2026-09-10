@@ -88,6 +88,9 @@ METADATA="${METADATA:-single}"
 # rather than edited on the running device.
 #   CMDLINE_REMOVE  space-separated GLOB patterns; any matching token is dropped
 #   CMDLINE_APPEND  tokens added at the end, AFTER the btrfs root flags
+# roles/<role>.env is SOURCED by bash, so any value containing a space must be
+# quoted -- `VAR=a b` assigns "a" and then tries to run `b` as a command, which
+# under set -e kills the build during sourcing, before any of this runs.
 # Order matters for console=: the kernel sends printk to every console= device,
 # but userspace /dev/console is the LAST one -- which is where systemd writes its
 # status output. So whichever console is listed last is the one that shows you a
