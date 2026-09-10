@@ -84,6 +84,16 @@ ROLE_ENV="$HERE/roles/$ROLE.env"
 . "$ROLE_ENV"
 DATA_MOUNT="${DATA_MOUNT:-/var/lib/coordinator}"
 METADATA="${METADATA:-single}"
+# Roles own their kernel command line, so /boot/firmware is written by the image
+# rather than edited on the running device.
+#   CMDLINE_REMOVE  space-separated GLOB patterns; any matching token is dropped
+#   CMDLINE_APPEND  tokens added at the end, AFTER the btrfs root flags
+# Order matters for console=: the kernel sends printk to every console= device,
+# but userspace /dev/console is the LAST one -- which is where systemd writes its
+# status output. So whichever console is listed last is the one that shows you a
+# failing boot.
+CMDLINE_REMOVE="${CMDLINE_REMOVE:-}"
+CMDLINE_APPEND="${CMDLINE_APPEND:-}"
 export DATA_MOUNT METADATA # consumed by assemble-btrfs.sh
 
 DL="$BUILD/$(basename "$RPIOS_URL")"
@@ -441,10 +451,28 @@ fixup_bootconfig() {
 	#   - drop fsck.repair=...        (btrfs is not fsck'd at boot)
 	#   - drop init=...sys-mods...    (firstboot/resize expects ext4 -> would fail)
 	#   - drop init_resize / resize2fs bits for the same reason
-	# then append the btrfs root flags (matching assemble's cmdline.fragment).
-	local out=() tok
+	#   - drop anything matching the role's CMDLINE_REMOVE globs
+	# then append the btrfs root flags, then the role's CMDLINE_APPEND tokens.
+	local out=() tok pat drop
 	# shellcheck disable=SC2013  # single-line file; word-splitting is intended
 	for tok in $(cat "$cmd"); do
+		# Role-supplied removals first, so a role can drop a token the generic
+		# rules would keep -- e.g. moving the serial console to the end of the
+		# line, or taking it off a UART the flight controller needs.
+		drop=0
+		for pat in $CMDLINE_REMOVE; do
+			# shellcheck disable=SC2254  # $pat is intentionally a glob
+			case "$tok" in
+			$pat)
+				drop=1
+				break
+				;;
+			esac
+		done
+		if [ "$drop" -eq 1 ]; then
+			echo "   (role CMDLINE_REMOVE dropped: $tok)"
+			continue
+		fi
 		case "$tok" in
 		root=*) out+=("root=PARTUUID=$root_partuuid") ;;
 		rootfstype=*) : ;; # replaced below
@@ -455,6 +483,10 @@ fixup_bootconfig() {
 		esac
 	done
 	out+=("rootfstype=btrfs" "rootflags=subvol=@")
+	# Role additions go last. rpi-imager later appends its own systemd.run=
+	# tokens after these when a card is provisioned, which does not disturb the
+	# relative order of any console= arguments.
+	for tok in $CMDLINE_APPEND; do out+=("$tok"); done
 	printf '%s ' "${out[@]}" | sed 's/ $//' >"$cmd"
 	printf '\n' >>"$cmd"
 
