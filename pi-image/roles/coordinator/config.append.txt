@@ -1,0 +1,21 @@
+# --- Coordinator (Pi 4B) role additions ---
+# Appended verbatim to config.txt by pi-image/build-image.sh. The explicit [all]
+# header is load-bearing: a stock config.txt can end inside a conditional section
+# (the pinned 2025-05-13 file happens to end in [all], but that is a property of
+# that file, not a guarantee). Forcing [all] makes these unconditional wherever
+# the vendor file left off. Same defence as the pocketterm role.
+[all]
+
+# FC serial link for coordinator-mavlink. The router talks to the flight
+# controller over the primary UART (GPIO14/15) at 1.5 Mbaud, which needs the
+# PL011 (ttyAMA0) rather than the mini-UART -- disable-bt remaps
+# /dev/serial0 -> /dev/ttyAMA0 and frees a stable high-baud port, trading away
+# onboard Bluetooth. Moved here from the coordinator ansible role, which used to
+# write these into /boot/firmware/config.txt on the running device.
+enable_uart=1
+dtoverlay=disable-bt
+
+# On-board ARM I2C bus (i2c-1, GPIO2/3) for the front-panel display
+# (coordinator#115, #110). A SEPARATE bus from the FC's I2C compass, so the
+# display cannot repeat the contention that dropped it. Enables /dev/i2c-1.
+dtparam=i2c_arm=on
