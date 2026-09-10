@@ -291,12 +291,9 @@ write_manifest() {
 #    module list, install btrfs-progs (ships the initramfs btrfs hook), and run
 #    update-initramfs. auto_initramfs=1 (set in step 6) makes the bootloader
 #    load the resulting initramfs8 / initramfs_2712 automatically.
-#
-#    virtio_* modules are added too, purely so the qemu -M virt boot-test
-#    (boot-test.sh) can find the root disk as /dev/vda; harmless on real Pi.
 # =============================================================================
 regenerate_initramfs() {
-	echo "== chroot: add btrfs (+virtio) to initramfs and rebuild =="
+	echo "== chroot: add btrfs to initramfs and rebuild =="
 
 	# Bind the staged boot dir where the kernel/auto_initramfs hooks expect it,
 	# so the generated initramfs lands in $BOOTSTAGE (our future p1).
@@ -310,17 +307,12 @@ regenerate_initramfs() {
 	cp -f /etc/resolv.conf "$ROOTFS/etc/resolv.conf" || true
 
 	# initramfs module list: one module per line (initramfs-tools resolves deps).
-	{
-		echo "btrfs"
-		echo "virtio_pci"
-		echo "virtio_blk"
-		echo "virtio_scsi"
-	} >>"$ROOTFS/etc/initramfs-tools/modules"
+	echo "btrfs" >>"$ROOTFS/etc/initramfs-tools/modules"
 
 	# mkinitramfs's default MODULES=dep introspects the *running* root device to
 	# choose modules -- which fails inside a chroot ("failed to determine device
 	# for /"), aborting the btrfs-progs install trigger. MODULES=most bypasses that
-	# by bundling a broad module set (covers btrfs + virtio); the right choice for
+	# by bundling a broad module set (which covers btrfs); the right choice for
 	# an offline/chroot image build. Must be set BEFORE the apt install below, since
 	# installing btrfs-progs fires update-initramfs via its dpkg trigger.
 	echo "MODULES=most" >"$ROOTFS/etc/initramfs-tools/conf.d/coordinator-modules"

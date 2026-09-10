@@ -56,30 +56,37 @@ new `roles/<name>.env` and adding it to the matrix in `build-pi-image.yaml`.
 | `assemble-btrfs.sh` | lay a populated rootfs into the layout: `mkfs.btrfs -m single`, create `@ @usr @var @home @data @scratch @snapshots`, populate each from the right rootfs slice, `chattr +C` docker, write `/etc/fstab` + emit the cmdline fragment | **done, verified** |
 | `test-assemble.sh` | local proof: dummy rootfs -> loopback image -> assemble -> mount per the generated fstab -> assert (all seven subvols, exclusive split, `ro`-`/usr` + `remount,rw` *of the assembled fstab* — note the **booted** `/usr` comes up `rw`, see [#96](https://github.com/symmatree/coordinator/issues/96), `@data` nesting under `/var`, docker `+C`). Needs a btrfs-capable kernel + `sudo`. | done |
 | `verify-in-vm.sh` | run `test-assemble.sh` inside a throwaway KVM guest -- for hosts whose kernel lacks btrfs (e.g. the Talos notebook host). | done |
-| `build-image.sh` | **convert path.** Download+verify the pinned official RPi OS Lite Bookworm arm64 image, extract its rootfs + boot partition, natively chroot the arm64 rootfs to regenerate the initramfs **with btrfs**, build a fresh MBR image (FAT `bootfs` p1 + btrfs p2 via `assemble-btrfs.sh`), fix up `cmdline.txt`/`config.txt`. arm64 + btrfs kernel only (CI: `ubuntu-24.04-arm`). | **v1, unproven boot** |
-| `boot-test.sh` | best-effort smoke test: pull kernel+initramfs from the built image, boot `qemu-system-aarch64 -M virt` with the image as a virtio disk, grep serial for a btrfs-root login/pivot. Non-fatal in v1 (`STRICT=1` to gate). | **v1** |
-| `.github/workflows/build-pi-image.yaml` | run `build-image.sh` -> `boot-test.sh` -> upload the compressed `.img` (+ serial log) on `ubuntu-24.04-arm`. | **v1** |
+| `build-image.sh` | **convert path.** Download+verify the pinned official RPi OS Lite Bookworm arm64 image, extract its rootfs + boot partition, natively chroot the arm64 rootfs to regenerate the initramfs **with btrfs**, build a fresh MBR image (FAT `bootfs` p1 + btrfs p2 via `assemble-btrfs.sh`), write the image manifest, fix up `cmdline.txt`/`config.txt`. arm64 + btrfs kernel only (CI: `ubuntu-24.04-arm`). | **boots on hardware** |
+| `provision/` | per-unit identity at flash time -- `firstrun.sh` template + `Flash-Card.ps1`. FAT-partition only, so the flashing host needs no btrfs/WSL. | done |
+| `.github/workflows/build-pi-image.yaml` | run `build-image.sh` -> upload the compressed `.img` on `ubuntu-24.04-arm`, per role. | done |
 | mmdebstrap rootfs config + genimage | the scratch build path | **TODO** |
 
 Pinned upstream: `2025-05-13-raspios-bookworm-arm64-lite.img.xz`
 (sha256 `62d025b9...ed45`) -- the last *Bookworm* Lite arm64 release (2025-10 onward raspios is
 Trixie). Bump URL+date+sha together in `build-image.sh`.
 
-## Status -- built end-to-end; boot unproven, the card is the gate
+## Status -- boots on real hardware
 
-The subvolume **assembly is verified**, and `build-pi-image.yaml` now **builds a real convert image
-end-to-end** in CI: download+verify -> native-chroot initramfs regen with btrfs -> `assemble-btrfs.sh`
--> package -> compress -> artifact. **Latest image:** `datasets/images/coordinator-pi-<YYYYMMDD>.img.xz`
-on the NAS (a CI build artifact -- regenerable, not source-controlled).
+The subvolume assembly is verified, `build-pi-image.yaml` builds a real convert image end-to-end
+per role, and **a btrfs-subvolume root boots on actual Raspberry Pi hardware**: `pocketterm` on a
+Pi 5 (SD, then cloned to NVMe) and `campod` on a Zero 2 W (SD, 2026-09-09, provisioned headless
+from `provision/`). `@` and `@usr` both mount, `initramfs8` loads under `auto_initramfs=1`, and the
+vendor first-boot mechanism runs. That retires coordinator#96's standing gate.
 
-**Boot is NOT yet proven, and the qemu `-M virt` boot-test cannot prove it.** The initramfs comes up
-btrfs-capable, but the Raspberry Pi *downstream* kernel does not initialise virtio on the synthetic
-`-M virt` platform, so no root disk appears (`/dev/vdaX does not exist`) -- an **emulation limitation,
-not an image fault**. Conclusive validation needs `raspi4b`-machine qemu (finicky) or, simplest, a
-**spare SD card on real hardware**, with the current ext4 card kept as instant rollback. That card
-flash is the real gate. (The initramfs crux `build-image.sh` handles: RPi OS boots initramfs-less
-and ships btrfs as a *module*, so it sets `auto_initramfs=1`, adds `btrfs` to the initramfs, installs
-`btrfs-progs`, and regenerates the initramfs in a native arm64 chroot with `MODULES=most`.)
+Still unproven: the **Pi 4B** (`coordinator` role) has never booted this image, and the
+`mmdebstrap` from-scratch path does not exist. The read-only `/usr` pillar is **not** enforced as
+built -- see coordinator#202; `/usr` comes up `rw`.
+
+There is no automated boot test. A `qemu-system-aarch64 -M virt` smoke test existed and was
+removed: the Raspberry Pi *downstream* kernel does not initialise virtio on that synthetic
+platform, so no root disk ever appeared and it returned `UNKNOWN` on all 38 runs it was in --
+9 minutes of arm64 runner time per build for a verdict the workflow then discarded with `|| true`.
+A hardware boot answers the question it was standing in for, and answers it better. If a gate is
+ever wanted, `raspi4b`-machine qemu is the direction, not `-M virt`.
+
+(The initramfs crux `build-image.sh` handles: RPi OS boots initramfs-less and ships btrfs as a
+*module*, so it sets `auto_initramfs=1`, adds `btrfs` to the initramfs, installs `btrfs-progs`, and
+regenerates the initramfs in a native arm64 chroot with `MODULES=most`.)
 
 ## Flash it
 
