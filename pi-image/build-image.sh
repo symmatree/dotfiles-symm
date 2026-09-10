@@ -216,6 +216,74 @@ apply_role_bootfs() {
 }
 
 # =============================================================================
+# 2c. write the image manifest into the rootfs
+#     A card cannot otherwise say which image it came from: the build stamps a
+#     date into the FILENAME and nothing into the rootfs. That makes the image
+#     the one layer a running unit can't report -- apt, git and docker can each
+#     compute their own staleness, the image can't (coordinator#96).
+#
+#     Three touchpoints, all deliberately tiny:
+#       /etc/fleet-image                  the canonical key=value record
+#       /etc/issue.d/20-fleet-image.issue shown pre-login on console AND serial
+#       fleet-image-id.service            one line into the journal each boot,
+#                                         so logs can be tied to what produced them
+#
+#     Nothing here may change after first boot, and no field is derivable from
+#     another -- a build date was dropped because IMAGE already carries it and two
+#     fields that can disagree are worse than one. A manifest that can drift from
+#     reality is worse than none, because it will be believed.
+# =============================================================================
+write_manifest() {
+	local img base src
+	img="$(basename "${OUT_IMG%.img}").img.xz" # the artifact name, as published
+	base="$(basename "$RPIOS_URL")"            # carries the suite -- bookworm vs trixie
+	src="${GITHUB_SHA:-$(git -C "$HERE" rev-parse HEAD 2>/dev/null || echo unknown)}"
+
+	echo "== write /etc/fleet-image =="
+	mkdir -p "$ROOTFS/etc/issue.d" "$ROOTFS/etc/systemd/system/multi-user.target.wants"
+	cat >"$ROOTFS/etc/fleet-image" <<-EOF
+		# Written by dotfiles-symm pi-image/build-image.sh at build time.
+		# Immutable: describes the image this card was flashed from, not current state.
+		IMAGE=$img
+		ROLE=$ROLE
+		SOURCE=$src
+		BASE=$base
+	EOF
+	cat "$ROOTFS/etc/fleet-image"
+
+	# Pre-login banner. issue.d is a drop-in dir (raspberrypi-sys-mods already
+	# ships IP.issue there), so this survives base-files updates -- appending to
+	# /etc/issue would not.
+	printf 'image: %s (%s)\n' "$img" "${src:0:12}" >"$ROOTFS/etc/issue.d/20-fleet-image.issue"
+
+	# One line per boot into the journal, so any log or capture collected from
+	# this unit can be tied back to the image that produced it. Lives in
+	# /etc/systemd/system, not /usr/lib, so it stays inside the @ subvolume and
+	# does not depend on @usr being writable.
+	#
+	# EnvironmentFile rather than `sh -c '. /etc/fleet-image; echo ...'`: systemd
+	# expands $VAR in ExecStart ITSELF, before any shell sees it, so the inline
+	# form would have logged a line of empty values. Letting systemd read the
+	# manifest as an environment file makes the expansion correct and drops the
+	# shell entirely.
+	cat >"$ROOTFS/etc/systemd/system/fleet-image-id.service" <<-'EOF'
+		[Unit]
+		Description=Log the image this system was flashed from
+
+		[Service]
+		Type=oneshot
+		RemainAfterExit=yes
+		EnvironmentFile=/etc/fleet-image
+		ExecStart=/bin/echo "fleet-image: ${IMAGE} role=${ROLE} source=${SOURCE} base=${BASE}"
+
+		[Install]
+		WantedBy=multi-user.target
+	EOF
+	ln -sf ../fleet-image-id.service \
+		"$ROOTFS/etc/systemd/system/multi-user.target.wants/fleet-image-id.service"
+}
+
+# =============================================================================
 # 3. regenerate the initramfs WITH btrfs, natively, via chroot
 #    THE CRUX. RPi OS boots with NO initramfs by default and the stock kernel
 #    has btrfs as a *module*, so a btrfs root needs an initramfs that carries
@@ -425,6 +493,7 @@ main() {
 	fetch_source
 	extract_source
 	apply_role_bootfs
+	write_manifest
 	regenerate_initramfs
 	build_target
 	report
