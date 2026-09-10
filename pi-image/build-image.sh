@@ -146,6 +146,27 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# losetup -P asks the KERNEL to re-read the partition table, but the /dev/loopNpM
+# device nodes are created asynchronously by udev. Using them on the next line is
+# a race that wins almost every time and then does not: observed 2026-09-10 as
+#   mkfs.vfat: unable to open /dev/loop0p1: No such file or directory
+# on the coordinator job, after ~38 clean runs of the same code.
+wait_for_partitions() {
+	local dev="$1" want="$2" i p missing
+	udevadm settle --timeout=30 >/dev/null 2>&1 || true
+	for ((i = 0; i < 100; i++)); do
+		missing=0
+		for ((p = 1; p <= want; p++)); do
+			[ -b "${dev}p${p}" ] || missing=1
+		done
+		[ "$missing" -eq 0 ] && return 0
+		sleep 0.1
+	done
+	echo "!! partition nodes for $dev never appeared after 10s" >&2
+	ls -l "${dev}"* >&2 2>&1 || true
+	return 1
+}
+
 # =============================================================================
 # 1. fetch + verify + decompress the vendor image
 # =============================================================================
@@ -171,6 +192,7 @@ extract_source() {
 	echo "== loop-attaching vendor image =="
 	SRC_LOOP="$(losetup --find --show -P "$SRC_IMG")"
 	echo "   $SRC_LOOP (p1=${SRC_LOOP}p1 boot, p2=${SRC_LOOP}p2 root)"
+	wait_for_partitions "$SRC_LOOP" 2
 
 	local sroot="$BUILD/src-root" sboot="$BUILD/src-boot"
 	mkdir -p "$sroot" "$sboot" "$ROOTFS" "$BOOTSTAGE"
@@ -392,6 +414,7 @@ build_target() {
 	DST_LOOP="$(losetup --find --show -P "$OUT_IMG")"
 	local p1="${DST_LOOP}p1" p2="${DST_LOOP}p2"
 	echo "   $DST_LOOP (p1=$p1 boot, p2=$p2 root)"
+	wait_for_partitions "$DST_LOOP" 2
 
 	# p1: FAT32 labelled 'bootfs' (kept for humans). The real image's fstab mounts
 	# /boot/firmware by PARTUUID, not this label, so a stray 'bootfs' card can't mount here.
