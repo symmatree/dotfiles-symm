@@ -66,28 +66,21 @@ Pinned upstream: `2025-05-13-raspios-bookworm-arm64-lite.img.xz`
 (sha256 `62d025b9...ed45`) -- the last *Bookworm* Lite arm64 release (2025-10 onward raspios is
 Trixie). Bump URL+date+sha together in `build-image.sh`.
 
-## Status -- boots on real hardware
+## Status -- boots on all three roles
 
-The subvolume assembly is verified, `build-pi-image.yaml` builds a real convert image end-to-end
-per role, and **a btrfs-subvolume root boots on actual Raspberry Pi hardware**: `pocketterm` on a
-Pi 5 (SD, then cloned to NVMe) and `campod` on a Zero 2 W (SD, 2026-09-09, provisioned headless
-from `provision/`). `@` and `@usr` both mount, `initramfs8` loads under `auto_initramfs=1`, and the
-vendor first-boot mechanism runs. That retires coordinator#96's standing gate.
+The image boots on every role's hardware, from SD in each case: `coordinator` on a Pi 4B,
+`campod` on a Zero 2 W, `pocketterm` on a Pi 5 (then cloned to NVMe). `@` and `@usr` both mount,
+`initramfs8` / `initramfs_2712` load under `auto_initramfs=1`, and per-unit provisioning runs on
+the first boot. That clears the gate coordinator#96 carried.
 
-Still unproven: the **Pi 4B** (`coordinator` role) has never booted this image, and the
-`mmdebstrap` from-scratch path does not exist. The read-only `/usr` pillar is **not** enforced as
-built -- see coordinator#202; `/usr` comes up `rw`.
+Not built: the `mmdebstrap` from-scratch path. The convert path is what exists.
 
-There is no automated boot test. A `qemu-system-aarch64 -M virt` smoke test existed and was
-removed: the Raspberry Pi *downstream* kernel does not initialise virtio on that synthetic
-platform, so no root disk ever appeared and it returned `UNKNOWN` on all 38 runs it was in --
-9 minutes of arm64 runner time per build for a verdict the workflow then discarded with `|| true`.
-A hardware boot answers the question it was standing in for, and answers it better. If a gate is
-ever wanted, `raspi4b`-machine qemu is the direction, not `-M virt`.
+There is no automated boot test, and `-M virt` qemu is not the way to add one -- the Raspberry Pi
+downstream kernel does not initialise virtio on that synthetic platform, so no root disk appears.
+If a gate is ever wanted, `raspi4b`-machine qemu is the direction.
 
-(The initramfs crux `build-image.sh` handles: RPi OS boots initramfs-less and ships btrfs as a
-*module*, so it sets `auto_initramfs=1`, adds `btrfs` to the initramfs, installs `btrfs-progs`, and
-regenerates the initramfs in a native arm64 chroot with `MODULES=most`.)
+The read-only `/usr` pillar is enforced on both SD units as of 2026-09-12 (`ro` in the mount
+options, writes refused), which contradicts coordinator#202 -- see that issue.
 
 ## Flash it
 
