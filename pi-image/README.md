@@ -84,11 +84,18 @@ options, writes refused), which contradicts coordinator#202 -- see that issue.
 
 ## Flash it
 
+Download the `<role>-pi-btrfs-img` artifact from a `build-pi-image` run. Actions always
+serves artifacts as a zip, so what lands is `<role>-pi-btrfs-img.zip` -- containing a **raw
+`.img`**, which means rpi-imager can be pointed at the downloaded zip directly. No unwrap.
+
 ```bash
-# Raspberry Pi Imager: "Use custom" -> select the .img.xz directly (it reads xz).
-# Or from a shell:
-xzcat <role>-pi-<date>.img.xz | sudo dd of=/dev/sdX bs=4M status=progress conv=fsync
+# Raspberry Pi Imager: "Use custom" -> select the downloaded .zip.
+# Or, having unzipped it, from a shell:
+sudo dd if=<role>-pi-<date>.img of=/dev/sdX bs=4M status=progress conv=fsync
 ```
+
+Per-unit identity (hostname, user, SSH key, WiFi) is injected at flash time -- see
+[`provision/`](provision/).
 
 The image ships `root=PARTUUID=<btrfs p2> rootfstype=btrfs rootflags=subvol=@` and `auto_initramfs=1`.
 If it does not come up, the boot config (cmdline/initramfs) is where to iterate -- the filesystem

@@ -19,18 +19,17 @@ Once, per machine:
 Copy-Item fleet.env.example fleet.env   # then fill it in
 ```
 
-Get the image from the `build-pi-image` run's artifacts and **extract the zip**. GitHub
-wraps every artifact in a zip, so what lands in your browser is
-`campod-pi-btrfs-img.zip` (~494 MB) containing `campod-pi-<YYYYMMDD>.img.xz` -- the
-artifact name carries no date, the file inside does (`build-image.sh` stamps it). Point
-the script at the inner `.img.xz`; rpi-imager reads `.xz` directly but not one that is
-still nested in a zip.
+Get the image from the `build-pi-image` run's artifacts. GitHub always serves artifacts as
+a zip, so what lands is `campod-pi-btrfs-img.zip` -- but it contains a **raw `.img`**, and
+rpi-imager reads `.zip` natively, so **point `-Image` at the downloaded zip**. No unwrap.
+
+(The artifact name carries no date; the `.img` inside does, stamped by `build-image.sh`.)
 
 Then per card, from an **elevated** PowerShell:
 
 ```powershell
 Get-Disk | Format-Table Number, FriendlyName, Size, BusType
-.\Flash-Card.ps1 -Hostname campod-sw -Disk 2 -Image $HOME\Downloads\campod-pi-20260908.img.xz
+.\Flash-Card.ps1 -Hostname campod-sw -Disk 2 -Image $HOME\Downloads\campod-pi-btrfs-img.zip
 ```
 
 `-Disk` takes the `Get-Disk` number (or a full `\\.\PhysicalDriveN`). That number is not
@@ -68,7 +67,7 @@ rather than copying the script to a local drive, so what you run stays a checkou
 `git pull`:
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\Flash-Card.ps1 -Hostname campod-sw -Disk 2 -Image $HOME\Downloads\campod-pi-20260908.img.xz
+powershell -ExecutionPolicy Bypass -File .\Flash-Card.ps1 -Hostname campod-sw -Disk 2 -Image $HOME\Downloads\campod-pi-btrfs-img.zip
 ```
 
 The image does not need to sit next to the script -- leave it where the browser put it.

@@ -43,23 +43,30 @@ jobs:
           set -euo pipefail
           sudo pi-image/build-image.sh "${{ matrix.role }}"
 
-      - name: "Compress image"
+      - name: "Take ownership of the build output"
         shell: "bash"
         run: |
           set -euo pipefail
           # build-image.sh runs as root, so .build is root-owned; take it back so
-          # this (non-sudo) step and the artifact upload can read/write it.
+          # the artifact upload can read it.
           sudo chown -R "$(id -u):$(id -g)" pi-image/.build
-          shopt -s nullglob
-          imgs=(pi-image/.build/${{ matrix.role }}-pi-*.img)
-          xz -T0 -6 "${imgs[0]}"
-          ls -lh pi-image/.build/${{ matrix.role }}-pi-*.img.xz
+          ls -lh pi-image/.build/${{ matrix.role }}-pi-*.img
 
+      # The RAW .img is uploaded, not a compressed one. Actions artifacts are
+      # always served as a zip -- the download URL is literally .../artifacts/N/zip
+      # -- so compressing here just nests an archive inside an archive and forces
+      # an unwrap before the image can be flashed. Handing the zip a raw .img
+      # instead makes the downloaded file directly flashable: rpi-imager reads
+      # .zip natively, so it is pointed at the download with no unwrap step.
+      #
+      # The zip's deflate is a worse compressor than xz (~0.18 vs ~0.14 on a Pi
+      # image), which costs download size and nothing else, and removes a
+      # compression step that was about two thirds of the build.
       - name: "Upload image artifact"
         uses: "actions/upload-artifact@v4"
         with:
           name: "${{ matrix.role }}-pi-btrfs-img"
-          path: "pi-image/.build/${{ matrix.role }}-pi-*.img.xz"
+          path: "pi-image/.build/${{ matrix.role }}-pi-*.img"
           if-no-files-found: "error"
           include-hidden-files: true
           retention-days: 14

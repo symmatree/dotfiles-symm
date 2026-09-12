@@ -25,10 +25,10 @@
     it writes anything. Confirm at that prompt, or pass -Force to skip it.
 
 .PARAMETER Image
-    Path to the built image (rpi-imager reads .xz directly). The CI artifact
-    downloads as e.g. campod-pi-btrfs-img.zip -- EXTRACT IT FIRST; the file you
-    want is the campod-pi-<YYYYMMDD>.img.xz inside. Imager will not read an
-    .img.xz that is still inside a .zip.
+    Path to the built image. The CI artifact downloads as e.g.
+    campod-pi-btrfs-img.zip and contains a RAW .img, which rpi-imager reads
+    directly -- point this at the downloaded .zip, no unwrap needed. A bare .img,
+    .img.xz or .img.zst also work.
 
 .PARAMETER SecretsFile
     Defaults to fleet.env beside this script.
@@ -41,7 +41,7 @@
     Skip the "about to erase this disk" confirmation.
 
 .EXAMPLE
-    .\Flash-Card.ps1 -Hostname campod-sw -Disk 2 -Image ~\Downloads\campod-pi-20260908.img.xz
+    .\Flash-Card.ps1 -Hostname campod-sw -Disk 2 -Image ~\Downloads\campod-pi-btrfs-img.zip
 #>
 [CmdletBinding()]
 param(
