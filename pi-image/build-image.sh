@@ -148,9 +148,8 @@ trap cleanup EXIT
 
 # losetup -P asks the KERNEL to re-read the partition table, but the /dev/loopNpM
 # device nodes are created asynchronously by udev. Using them on the next line is
-# a race that wins almost every time and then does not: observed 2026-09-10 as
-#   mkfs.vfat: unable to open /dev/loop0p1: No such file or directory
-# on the coordinator job, after ~38 clean runs of the same code.
+# a race; when it is lost the next command fails with a confusing ENOENT on the
+# partition device.
 wait_for_partitions() {
 	local dev="$1" want="$2" i p missing
 	udevadm settle --timeout=30 >/dev/null 2>&1 || true
@@ -392,10 +391,19 @@ regenerate_initramfs() {
 
 	# btrfs-progs provides `btrfs` + the initramfs hook that pulls the module in.
 	# RPi OS Lite does not ship it by default, so install it (needs network).
+	#
+	# resize2fs_once is masked in the same pass. It is an RPi OS LSB service that
+	# grows the root filesystem on first boot: it resolves the root device via
+	# findmnt, which on btrfs yields subvolume notation (/dev/mmcblk0p2[/@]), and
+	# hands that to resize2fs -- an ext2/3/4 tool that could not grow btrfs even if
+	# the path parsed. It cannot succeed on this image, so it leaves a permanently
+	# failed unit on every card, and a `systemctl --failed` that is never clean is
+	# one nobody reads.
 	chroot "$ROOTFS" /bin/bash -eu -c '
 		export DEBIAN_FRONTEND=noninteractive
 		apt-get update -qq
 		apt-get install -y -qq btrfs-progs
+		systemctl mask resize2fs_once.service
 		update-initramfs -c -k all
 	'
 

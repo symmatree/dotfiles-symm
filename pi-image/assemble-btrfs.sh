@@ -167,35 +167,13 @@ echo "== write /etc/fstab (UUID=$UUID, boot=$BOOTFS_SPEC) =="
 	# FAT firmware partition -- fstab line only for the spike (no FAT part here).
 	# Real image keys this by PARTUUID (BOOTFS_SPEC) so no stray 'bootfs' card mounts here.
 	#
-	# NO nofail, deliberately, and matching the vendor image's own fstab.
-	# systemd.mount(5): a local mount gains "a Before= dependency on
-	# local-fs.target unless one or more mount options among nofail,
-	# x-systemd.wanted-by=, and x-systemd.required-by= is set."
-	#
-	# So nofail DELETES the ordering guarantee. boot-firmware.mount is then not
-	# required to finish before local-fs.target -> sysinit.target -> basic.target
-	# -> kernel-command-line.service, which is the transient unit rpi-imager's
-	# provisioning runs firstrun.sh from. Lose that race and systemd execs
-	# /boot/firmware/firstrun.sh against an empty mountpoint, the unit fails to
-	# start, and its default FailureAction=exit powers the board off -- while the
-	# mount completes moments later and looks fine in the shutdown log.
-	#
-	# Observed on campod-sw across three flashes: dead on first boot, fine on the
-	# second, with firstrun.sh still on the card. Diagnosed 2026-09-10 from serial:
-	#   [FAILED] Failed to start kernel-command-line.service
-	#   ...
-	#   Unmounting boot-firmware.mount - /boot/firmware...
-	#
-	# Mounted rw, matching the vendor image (whose fstab is 'defaults'). It was 'ro'
-	# here for write-frugality, but nothing writes /boot/firmware in steady state, so
-	# ro bought no write reduction -- while breaking every consumer that does write it:
-	#   - Imager's firstrun.sh self-cleanup (rm firstrun.sh + strip systemd.run= from
-	#     cmdline.txt). Under ro both fail, the script still exits 0, and
-	#     systemd.run_success_action=reboot re-runs it forever -> boot loop.
-	#   - sshswitch.service   (set -e; rm "$FWLOC/ssh")      -> unit fails, sshd never on
-	#   - userconfig.service  (sh -e; rm userconf.txt)       -> Restart=on-failure loop
-	#   - rpi-eeprom-update.service, and kernel/firmware apt upgrades
-	# See coordinator#96 (headless provisioning).
+	# NO nofail, matching the vendor image's own fstab. systemd.mount(5): a local
+	# mount gains "a Before= dependency on local-fs.target unless one or more mount
+	# options among nofail, x-systemd.wanted-by=, and x-systemd.required-by= is
+	# set" -- so nofail would drop boot-firmware.mount out of the ordering that
+	# everything reading /boot/firmware depends on. The cost of omitting it is that
+	# an unmountable FAT partition stops the boot, which is correct here: the
+	# firmware already read that partition to reach the kernel.
 	printf '%-42s  %-22s  %-5s  %s  0 2\n' "$BOOTFS_SPEC" "/boot/firmware" "vfat" "defaults"
 	printf '%-42s  %-22s  %-5s  %s  0 0\n' "tmpfs" "/tmp" "tmpfs" "defaults,noatime,nosuid,nodev"
 } >"$FSTAB"
