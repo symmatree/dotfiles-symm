@@ -233,6 +233,13 @@ apply_role_bootfs() {
 			printf '\n'
 			cat "$ca"
 		} >>"$BOOTSTAGE/config.txt"
+
+		# Print the directives as they now sit in config.txt, with the section
+		# header that governs them. An appended line that landed inside a [cm4] or
+		# [cm5] section is silently inert on other models, and nothing else in the
+		# build would notice.
+		echo "-- config.txt now ends with (directives only) --"
+		grep -vE '^\s*(#|$)' "$BOOTSTAGE/config.txt" | tail -n 12
 	fi
 
 	if [ -n "${OVERLAY_ZIP_URL:-}" ]; then
@@ -281,6 +288,13 @@ install_grow_rootfs() {
 		WantedBy=multi-user.target
 	EOF
 	ln -sf ../grow-rootfs.service \
+		"$ROOTFS/etc/systemd/system/multi-user.target.wants/grow-rootfs.service"
+
+	# Show what landed rather than only that we tried. A step that announces
+	# itself but does not prove itself looks identical in the log whether it
+	# worked or not.
+	ls -l "$ROOTFS/usr/local/sbin/grow-rootfs" \
+		"$ROOTFS/etc/systemd/system/grow-rootfs.service" \
 		"$ROOTFS/etc/systemd/system/multi-user.target.wants/grow-rootfs.service"
 }
 
@@ -380,6 +394,10 @@ write_manifest() {
 		WantedBy=multi-user.target
 	EOF
 	ln -sf ../fleet-image-id.service \
+		"$ROOTFS/etc/systemd/system/multi-user.target.wants/fleet-image-id.service"
+
+	ls -l "$ROOTFS/etc/issue.d/20-fleet-image.issue" \
+		"$ROOTFS/etc/systemd/system/fleet-image-id.service" \
 		"$ROOTFS/etc/systemd/system/multi-user.target.wants/fleet-image-id.service"
 }
 
