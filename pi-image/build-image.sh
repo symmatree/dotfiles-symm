@@ -251,6 +251,36 @@ apply_role_bootfs() {
 }
 
 # =============================================================================
+# 2d. /boot/firstrun.sh -> firmware/firstrun.sh
+#     THE FIRST-BOOT FIX. rpi-imager appends
+#       systemd.run=/boot/firstrun.sh
+#     to cmdline.txt at flash time and writes the script to the FAT partition,
+#     which Bookworm mounts at /boot/FIRMWARE. The vendor squares that circle with
+#     an initramfs script (raspberrypi-sys-mods' imager_fixup) that rewrites
+#     cmdline.txt to /boot/firmware/firstrun.sh -- but that rewrite lands on the
+#     CARD, for the NEXT boot. The kernel has already read this boot's cmdline.
+#
+#     On a stock card that is fine, because boot 1 is consumed by
+#     init=/usr/lib/raspberrypi-sys-mods/firstboot: systemd is not PID 1, so
+#     systemd.run is inert, and firstboot reboots into the corrected cmdline.
+#
+#     We strip that init= (it runs resize2fs, meaningless on btrfs), so boot 1 IS
+#     the systemd boot and it execs a path that does not exist. The unit fails to
+#     START, and systemd-run-generator's default FailureAction=exit powers the
+#     board off -- which presents as a dead unit, not an error. Boot 2 then works,
+#     because imager_fixup fixed the cmdline during boot 1.
+#
+#     A relative symlink makes boot 1 resolve. It costs nothing when no firstrun.sh
+#     is present (a dangling symlink nothing reads) and nothing after provisioning,
+#     when firstrun.sh deletes itself.
+# =============================================================================
+link_firstrun_compat() {
+	echo "== symlink /boot/firstrun.sh -> firmware/firstrun.sh (boot-1 exec path) =="
+	ln -sfn firmware/firstrun.sh "$ROOTFS/boot/firstrun.sh"
+	ls -l "$ROOTFS/boot/firstrun.sh"
+}
+
+# =============================================================================
 # 2c. write the image manifest into the rootfs
 #     A card cannot otherwise say which image it came from: the build stamps a
 #     date into the FILENAME and nothing into the rootfs. That makes the image
@@ -543,6 +573,7 @@ main() {
 	fetch_source
 	extract_source
 	apply_role_bootfs
+	link_firstrun_compat
 	write_manifest
 	regenerate_initramfs
 	build_target
