@@ -1,3 +1,13 @@
+# --- campod (Pi Zero 2 W) role additions ---
+# Appended verbatim to the END of the vendor config.txt by build-image.sh, so
+# these lines land in whatever conditional section that file happened to end in.
+# The explicit [all] header resets that scope to unconditional. The pinned
+# 2025-05-13 config.txt does end in [all] -- read out of its FAT partition to
+# confirm -- but that is a property of that file, not a guarantee: a vendor file
+# ending inside [cm4]/[cm5] would make every line below silently inert on a Zero,
+# with no error anywhere. Same defence the coordinator and pocketterm roles use.
+[all]
+
 # Serial console on GPIO 14/15 -- pins 8 (TXD) and 10 (RXD), ground on pin 6,
 # 115200 8N1. The field-debug path on a headless pod: no display, no keyboard.
 #
