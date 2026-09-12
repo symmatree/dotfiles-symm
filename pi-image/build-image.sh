@@ -250,6 +250,41 @@ apply_role_bootfs() {
 }
 
 # =============================================================================
+# 2c-bis. install grow-rootfs
+#     A flashed image is only as large as it was built, so the rest of the card
+#     stays unpartitioned until something grows it. See grow-rootfs.sh for why
+#     neither vendor mechanism survives into this image.
+# =============================================================================
+install_grow_rootfs() {
+	echo "== install /usr/local/sbin/grow-rootfs + unit =="
+	install -D -m 0755 "$HERE/grow-rootfs.sh" "$ROOTFS/usr/local/sbin/grow-rootfs"
+
+	# Unit in /etc/systemd/system, not /usr/lib, so it lives in @ and does not
+	# depend on @usr being writable. Ordered before multi-user.target: the
+	# provisioning boot never reaches that target, so this first runs on the boot
+	# after firstrun.sh -- before anything that writes at volume.
+	mkdir -p "$ROOTFS/etc/systemd/system/multi-user.target.wants"
+	cat >"$ROOTFS/etc/systemd/system/grow-rootfs.service" <<-'EOF'
+		[Unit]
+		Description=Grow the btrfs root to fill the card
+		DefaultDependencies=no
+		After=local-fs.target
+		Before=multi-user.target shutdown.target
+		Conflicts=shutdown.target
+
+		[Service]
+		Type=oneshot
+		RemainAfterExit=yes
+		ExecStart=/usr/local/sbin/grow-rootfs
+
+		[Install]
+		WantedBy=multi-user.target
+	EOF
+	ln -sf ../grow-rootfs.service \
+		"$ROOTFS/etc/systemd/system/multi-user.target.wants/grow-rootfs.service"
+}
+
+# =============================================================================
 # 2d. /boot/firstrun.sh -> firmware/firstrun.sh
 #     THE FIRST-BOOT FIX. rpi-imager appends
 #       systemd.run=/boot/firstrun.sh
@@ -263,8 +298,9 @@ apply_role_bootfs() {
 #     init=/usr/lib/raspberrypi-sys-mods/firstboot: systemd is not PID 1, so
 #     systemd.run is inert, and firstboot reboots into the corrected cmdline.
 #
-#     We strip that init= (it runs resize2fs, meaningless on btrfs), so boot 1 IS
-#     the systemd boot and it execs a path that does not exist. The unit fails to
+#     We strip that init= (it randomises the MBR disk identifier, which would
+#     break this image's pinned root=PARTUUID), so boot 1 IS the systemd boot and
+#     it execs a path that does not exist. The unit fails to
 #     START, and systemd-run-generator's default FailureAction=exit powers the
 #     board off -- which presents as a dead unit, not an error. Boot 2 then works,
 #     because imager_fixup fixed the cmdline during boot 1.
@@ -513,7 +549,14 @@ fixup_bootconfig() {
 	#   - replace root=...            -> root=PARTUUID=<new p2>
 	#   - drop rootfstype=ext4        (we append rootfstype=btrfs)
 	#   - drop fsck.repair=...        (btrfs is not fsck'd at boot)
-	#   - drop init=...sys-mods...    (firstboot/resize expects ext4 -> would fail)
+	#   - drop init=/usr/lib/... entries. Two live in the vendor cmdline and both
+	#     must go, for DIFFERENT reasons:
+	#       raspberrypi-sys-mods/firstboot -- does NOT resize (verified against
+	#         20250930~bookworm: it regenerates SSH host keys, applies custom.toml,
+	#         and RANDOMISES the MBR disk identifier). That last part is why it
+	#         cannot run here: this image pins root=PARTUUID=c0dec0de-02.
+	#       raspi-config/init_resize.sh -- grows the partition, then hands off to
+	#         resize2fs. Replaced by grow-rootfs, which does it online for btrfs.
 	#   - drop init_resize / resize2fs bits for the same reason
 	#   - drop anything matching the role's CMDLINE_REMOVE globs
 	# then append the btrfs root flags, then the role's CMDLINE_APPEND tokens.
@@ -541,7 +584,8 @@ fixup_bootconfig() {
 		root=*) out+=("root=PARTUUID=$root_partuuid") ;;
 		rootfstype=*) : ;; # replaced below
 		fsck.repair=*) : ;;
-		init=/usr/lib/raspberrypi-sys-mods/*) : ;;
+		init=/usr/lib/raspberrypi-sys-mods/*) : ;; # see note above
+		init=/usr/lib/raspi-config/*) : ;;         # ditto
 		init_resize*) : ;;
 		*) out+=("$tok") ;;
 		esac
@@ -582,6 +626,7 @@ main() {
 	extract_source
 	apply_role_bootfs
 	link_firstrun_compat
+	install_grow_rootfs
 	write_manifest
 	regenerate_initramfs
 	build_target
