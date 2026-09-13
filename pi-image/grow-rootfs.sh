@@ -57,10 +57,19 @@ if [ "$slack" -lt 131072 ]; then
 fi
 
 log "growing ${part} (p${pnum}) to fill /dev/$disk -- $((slack / 2048)) MiB unpartitioned"
-parted -s "/dev/$disk" resizepart "$pnum" 100%
-# The kernel will not re-read the table of a disk with a mounted partition, so
-# update just this partition's size in place. Disk + --nr rather than passing the
-# partition device, which is the unambiguous form.
+
+# sfdisk, not parted. `parted -s` does NOT answer its own "Partition is being
+# used. Are you sure you want to continue?" -- it prints the warning and exits 1,
+# which is how this failed on campod-se. sfdisk takes its input as a script by
+# design, so there is no prompt to answer: ",+" means keep the start, extend to
+# the end of the disk. It also leaves the MBR disk identifier alone, which
+# matters because the image pins root=PARTUUID=c0dec0de-02.
+#
+#   --no-reread       do not re-read the table afterwards; that ioctl fails while
+#                     a partition on the disk is mounted
+#   --no-tell-kernel  do not ask the kernel to update, for the same reason --
+#                     partx below does it for the one partition instead
+printf ',+\n' | sfdisk --no-reread --no-tell-kernel -N "$pnum" "/dev/$disk"
 partx -u --nr "$pnum" "/dev/$disk"
 btrfs filesystem resize max /
 log "done: $(findmnt -n -o SIZE /) root"
