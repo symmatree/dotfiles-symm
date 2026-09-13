@@ -349,8 +349,8 @@ link_firstrun_compat() {
 # =============================================================================
 write_manifest() {
 	local img base src
-	img="$(basename "${OUT_IMG%.img}").img.xz" # the artifact name, as published
-	base="$(basename "$RPIOS_URL")"            # carries the suite -- bookworm vs trixie
+	img="$(basename "$OUT_IMG")"    # the artifact name, as published (raw .img since #47)
+	base="$(basename "$RPIOS_URL")" # carries the suite -- bookworm vs trixie
 	src="${GITHUB_SHA:-$(git -C "$HERE" rev-parse HEAD 2>/dev/null || echo unknown)}"
 
 	echo "== write /etc/fleet-image =="
