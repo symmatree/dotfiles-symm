@@ -52,24 +52,30 @@ slack=$((disk_sectors - (part_start + part_sectors)))
 # 64 MiB of tolerance: alignment and the MBR leave a little unusable tail, and we
 # do not want to rewrite the partition table every boot to chase a few sectors.
 if [ "$slack" -lt 131072 ]; then
-	log "already fills /dev/$disk ($((part_sectors / 2048)) MiB, $((slack / 2048)) MiB slack) -- nothing to do"
-	exit 0
+	log "partition already fills /dev/$disk ($((part_sectors / 2048)) MiB, $((slack / 2048)) MiB slack)"
+else
+	log "growing ${part} (p${pnum}) to fill /dev/$disk -- $((slack / 2048)) MiB unpartitioned"
+
+	# sfdisk, not parted. `parted -s` does NOT answer its own "Partition is being
+	# used. Are you sure you want to continue?" -- it prints the warning and exits 1,
+	# which is how this failed on campod-se. sfdisk takes its input as a script by
+	# design, so there is no prompt to answer: ",+" means keep the start, extend to
+	# the end of the disk. It also leaves the MBR disk identifier alone, which
+	# matters because the image pins root=PARTUUID=c0dec0de-02.
+	#
+	#   --no-reread       do not re-read the table afterwards; that ioctl fails while
+	#                     a partition on the disk is mounted
+	#   --no-tell-kernel  do not ask the kernel to update, for the same reason --
+	#                     partx below does it for the one partition instead
+	printf ',+\n' | sfdisk --no-reread --no-tell-kernel -N "$pnum" "/dev/$disk"
+	partx -u --nr "$pnum" "/dev/$disk"
 fi
 
-log "growing ${part} (p${pnum}) to fill /dev/$disk -- $((slack / 2048)) MiB unpartitioned"
-
-# sfdisk, not parted. `parted -s` does NOT answer its own "Partition is being
-# used. Are you sure you want to continue?" -- it prints the warning and exits 1,
-# which is how this failed on campod-se. sfdisk takes its input as a script by
-# design, so there is no prompt to answer: ",+" means keep the start, extend to
-# the end of the disk. It also leaves the MBR disk identifier alone, which
-# matters because the image pins root=PARTUUID=c0dec0de-02.
-#
-#   --no-reread       do not re-read the table afterwards; that ioctl fails while
-#                     a partition on the disk is mounted
-#   --no-tell-kernel  do not ask the kernel to update, for the same reason --
-#                     partx below does it for the one partition instead
-printf ',+\n' | sfdisk --no-reread --no-tell-kernel -N "$pnum" "/dev/$disk"
-partx -u --nr "$pnum" "/dev/$disk"
+# Unconditional, not part of the else above. The test that gated it is about the
+# PARTITION; the filesystem is a separate thing that can lag behind it. If a boot
+# grows the partition and then dies before this line, the next boot sees no slack,
+# takes the branch above, and would never resize -- leaving the fs small inside a
+# full-size partition for good. `resize max` is a no-op once the fs already fills
+# its partition, so running it every boot costs an ioctl and removes that corner.
 btrfs filesystem resize max /
 log "done: $(findmnt -n -o SIZE /) root"
