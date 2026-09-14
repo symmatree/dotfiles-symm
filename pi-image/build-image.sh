@@ -453,13 +453,51 @@ regenerate_initramfs() {
 	# the path parsed. It cannot succeed on this image, so it leaves a permanently
 	# failed unit on every card, and a `systemctl --failed` that is never clean is
 	# one nobody reads.
+	#
+	# dphys-swapfile is masked for a different reason: it works, and we do not want
+	# what it does. RPi OS ships it enabled with CONF_SWAPSIZE=512, so every card
+	# gets a half-gigabyte swapfile at /var/swap -- which on this layout lands on the
+	# @var btrfs subvolume, i.e. on the SD card, i.e. on the one medium this whole
+	# design exists to write to as little as possible.
+	#
+	# Measured on campod-se before this change: 512 MiB of swap configured and
+	# ~117 MiB of it in use, with dockerd (29 MiB), containerd (16 MiB) and the
+	# capture process (33 MiB) paged out onto the card. That is sustained SD write
+	# and read traffic in the iowait path of a device whose job is to capture data
+	# at 1 Hz, on a vehicle that loses power without warning.
+	#
+	# An appliance that cannot fit in its RAM should fail visibly, not silently
+	# trade latency and flash wear for the appearance of working. If demand really
+	# exceeds 512 MB, that is a decision to take deliberately -- shrink the demand,
+	# or change the hardware -- not one to have made for us by a vendor default.
 	chroot "$ROOTFS" /bin/bash -eu -c '
 		export DEBIAN_FRONTEND=noninteractive
 		apt-get update -qq
 		apt-get install -y -qq btrfs-progs
 		systemctl mask resize2fs_once.service
+		systemctl mask dphys-swapfile.service
 		update-initramfs -c -k all
 	'
+
+	# The swapfile itself, if the vendor rootfs carried one. Masking the service
+	# stops it being recreated or activated; this reclaims the space it already
+	# occupies. /var/swap on campod-se is dated 2025-05-12 -- the day before the
+	# pinned base image was released -- so it predates our build rather than being
+	# created on first boot.
+	if [ -e "$ROOTFS/var/swap" ]; then
+		echo "== removing inherited swapfile: $(du -h "$ROOTFS/var/swap" | cut -f1) =="
+		rm -f "$ROOTFS/var/swap"
+	else
+		echo "== no /var/swap in the rootfs (nothing to remove) =="
+	fi
+
+	# Prove it rather than announce it: both units masked means a symlink to
+	# /dev/null, and no swap entry anywhere in fstab.
+	echo "== swap/resize units after masking: =="
+	ls -l "$ROOTFS/etc/systemd/system/resize2fs_once.service" \
+		"$ROOTFS/etc/systemd/system/dphys-swapfile.service"
+	echo "== fstab swap entries (expect none): =="
+	grep -c swap "$ROOTFS/etc/fstab" || true
 
 	# Confirm an initramfs was actually produced (glob, not ls|grep).
 	echo "== initramfs artifacts now in bootfs: =="
