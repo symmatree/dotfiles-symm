@@ -119,7 +119,7 @@ require_root() {
 require_tools() {
 	local miss=0 t
 	for t in xz curl sha256sum losetup mount umount rsync parted \
-		mkfs.vfat mkfs.btrfs blkid sfdisk chroot unzip; do
+		mkfs.vfat mkfs.btrfs blkid sfdisk chroot unzip cpio; do
 		command -v "$t" >/dev/null 2>&1 || {
 			echo "missing tool: $t" >&2
 			miss=1
@@ -402,6 +402,127 @@ write_manifest() {
 }
 
 # =============================================================================
+# 2f. flasher boot path (SPIKE)
+#     Goal: re-image p2 over the network without pulling the card. You cannot
+#     overwrite the filesystem you are running from, so something else has to be
+#     running. That something is an initramfs whose /init never pivots to a real
+#     root -- the whole system lives in RAM and nothing holds p2 open. This is
+#     how the Foundation's own network installer works; we are not inventing it.
+#
+#     Selected by TRYBOOT, which is a firmware feature on every Pi model:
+#     `reboot '0 tryboot'` boots using tryboot.txt instead of config.txt EXACTLY
+#     ONCE. If the box does not come up, a power cycle falls back to config.txt
+#     with nothing for us to build. That is the rollback story, and it is free.
+#
+#     WHAT THIS SPIKE DOES AND DOES NOT DO. It boots, reports what it can see,
+#     and reboots. It does not write anything. The unknown worth settling first
+#     is whether tryboot works on the Zero 2 W's bootcode.bin/start.elf path --
+#     the docs say all models, Canonical ship A/B boot on Pi using it, but
+#     nobody here has watched it run on this silicon. Wiring dd to a
+#     partition before knowing the boot mechanism works would put the
+#     irreversible step first.
+#
+#     The staging question -- where the downloaded image lives while p2 is
+#     rewritten -- is deliberately NOT answered here, because every answer
+#     costs something and the choice should be made knowingly: a third
+#     partition collides with grow-rootfs taking the whole tail; renumbering
+#     to put staging before the root moves root=PARTUUID off -02; enlarging
+#     the FAT partition makes something other than the image a writer of
+#     /boot/firmware. None of that is worth deciding until tryboot is proven.
+#
+#     GitHub serves build artifacts as .zip, so the eventual flasher unzips
+#     rather than un-xz's. busybox carries an unzip applet, which is why this
+#     reports the applet list -- so we know it is there before relying on it.
+# =============================================================================
+install_flasher_boot() {
+	echo "== build flasher initramfs + tryboot.txt =="
+
+	# busybox-static is installed in the chroot pass above, while /proc and DNS
+	# still exist there -- this step runs after those binds are torn down, so it
+	# is host-side only: copy the binary out, build the cpio, write the configs.
+	local fdir="$BUILD/flasher"
+	rm -rf "$fdir"
+	mkdir -p "$fdir"/{bin,proc,sys,dev,mnt}
+	local bb=""
+	for c in usr/bin/busybox bin/busybox; do
+		[ -x "$ROOTFS/$c" ] && bb="$ROOTFS/$c" && break
+	done
+	[ -n "$bb" ] || {
+		echo "!! busybox-static did not land in the rootfs" >&2
+		exit 1
+	}
+	cp "$bb" "$fdir/bin/busybox"
+
+	cat >"$fdir/init" <<-'INIT'
+		#!/bin/busybox sh
+		# PID 1 of a RAM-only system. Nothing here touches p2; this spike exists
+		# to prove the boot path, not to use it.
+		/bin/busybox --install -s /bin
+		mount -t proc none /proc
+		mount -t sysfs none /sys
+		mount -t devtmpfs none /dev 2>/dev/null
+
+		say() { echo ""; echo "=== $* ==="; }
+		echo ""
+		echo "#############################################################"
+		echo "##  FLASHER INITRAMFS -- tryboot reached RAM-only userspace ##"
+		echo "#############################################################"
+		say "kernel cmdline";        cat /proc/cmdline
+		say "uptime";                cat /proc/uptime
+		say "memory";                head -3 /proc/meminfo
+		say "block devices";         cat /proc/partitions
+		say "can we read p1 and p2"
+		for d in /dev/mmcblk0p1 /dev/mmcblk0p2; do
+		  if dd if="$d" of=/dev/null bs=512 count=1 2>/dev/null; then
+		    echo "  $d readable"
+		  else
+		    echo "  $d NOT READABLE"
+		  fi
+		done
+		say "is p2 mounted (it must NOT be)"; grep mmcblk /proc/mounts || echo "  nothing mounted -- correct"
+		say "busybox applets we will need"
+		for a in dd unzip sync mount reboot sha256sum; do
+		  busybox --list | grep -qx "$a" && echo "  $a  present" || echo "  $a  MISSING"
+		done
+		say "verdict"
+		echo "  If you are reading this over serial, tryboot works on this board"
+		echo "  and an initramfs-only boot can reach the raw partitions."
+		echo ""
+		echo "  Rebooting in 30s into the NORMAL system (config.txt)."
+		echo "  tryboot is one-shot: nothing was changed and nothing persists."
+		sleep 30
+		sync
+		reboot -f
+	INIT
+	chmod 0755 "$fdir/init"
+
+	(cd "$fdir" && find . | cpio -o -H newc --quiet | gzip -9) >"$BOOTSTAGE/initramfs-flash.gz"
+
+	# No root= at all: with an initramfs present and no root device named, the
+	# kernel runs /init from the cpio and never looks for a real root.
+	cat >"$BOOTSTAGE/cmdline-flash.txt" <<-'CMD'
+		console=serial0,115200 console=tty1 panic=30
+	CMD
+
+	# tryboot.txt is a full config, not an overlay on config.txt -- the firmware
+	# reads one or the other. Start from the real config so the board comes up
+	# the same way (UART, overlays, arm_boost), then point it at the flasher.
+	{
+		cat "$BOOTSTAGE/config.txt"
+		echo ""
+		echo "# --- appended by build-image.sh: flasher boot (tryboot only) ---"
+		echo "initramfs initramfs-flash.gz followkernel"
+		echo "cmdline=cmdline-flash.txt"
+		echo "auto_initramfs=0"
+	} >"$BOOTSTAGE/tryboot.txt"
+
+	# Prove it landed rather than announce it.
+	ls -l "$BOOTSTAGE/initramfs-flash.gz" "$BOOTSTAGE/tryboot.txt" "$BOOTSTAGE/cmdline-flash.txt"
+	echo "== tryboot.txt tail: =="
+	tail -n 5 "$BOOTSTAGE/tryboot.txt"
+}
+
+# =============================================================================
 # 3. regenerate the initramfs WITH btrfs, natively, via chroot
 #    THE CRUX. RPi OS boots with NO initramfs by default and the stock kernel
 #    has btrfs as a *module*, so a btrfs root needs an initramfs that carries
@@ -473,7 +594,7 @@ regenerate_initramfs() {
 	chroot "$ROOTFS" /bin/bash -eu -c '
 		export DEBIAN_FRONTEND=noninteractive
 		apt-get update -qq
-		apt-get install -y -qq btrfs-progs
+		apt-get install -y -qq btrfs-progs busybox-static
 		systemctl mask resize2fs_once.service
 		systemctl mask dphys-swapfile.service
 		update-initramfs -c -k all
@@ -685,6 +806,7 @@ main() {
 	install_grow_rootfs
 	write_manifest
 	regenerate_initramfs
+	install_flasher_boot
 	build_target
 	report
 }
