@@ -158,34 +158,14 @@ echo "== write /etc/fstab (UUID=$UUID, boot=$BOOTFS_SPEC) =="
 	# btrfs is self-consistent (CoW) and is not fsck'd at boot, so the pass field is 0
 	# on every btrfs line (the ext4-style 1/2 passes don't apply).
 	#
-	# NO compression, and absent from EVERY line rather than some. compress is a
-	# per-SUPERBLOCK btrfs option: a mount that omits it does not inherit, it sets
-	# the whole filesystem to "use no compression", and whichever subvolume mounts
-	# last decides. Mount order is not fixed across devices, so an inconsistent set
-	# of lines produced two units from one build, one compressing and one not. That
-	# was the bug; uniformity is the fix, and uniformly-absent is as consistent as
-	# uniformly-present.
+	# No compression. Unclear-to-negative performance on this hardware and no proven
+	# use case: the card is 30 GB and ~6% used, so space was never the constraint, and
+	# zstd costs CPU on every read and write of anything compressible.
 	#
-	# WHY IT IS GONE. It was never buying much and it costs CPU on every read and
-	# write of anything compressible, on a 4-core Zero 2 W that has better uses for
-	# it. The card is 30 GB and about 6% used, so space was never the constraint.
-	# The one workload it measurably compressed is the accelerometer JSONL, roughly
-	# 4:1 -- which sounds good as a ratio and is about 96 KB/s in absolute terms.
-	# Nothing.
-	#
-	# Against that, it is a live suspect in a read amplification we do not
-	# understand. btrfs compresses in 128 KiB ranges; the accel writer calls
-	# sync_file_range(WRITE) every 64 KiB, so writeback is forced through every
-	# compression range twice. Assembling a compressed extent needs the whole range,
-	# so a half-range flush whose pages have since gone clean and been reclaimed
-	# means reading and decompressing what was just written -- read-modify-write at
-	# compression-range granularity, driven by writes, on an append-only workload
-	# that should never read at all. Measured on campod-se: 20.7 MiB/s of reads
-	# sustained for 76 minutes, card saturated, against 34 KB/s of writes.
-	#
-	# That is a hypothesis, not a diagnosis, and this change is not conditional on
-	# it. Compression goes because what it earns here is negligible and what it
-	# costs is not. If the reads persist without it, we have lost nothing.
+	# If it ever comes back it goes on EVERY line or none. compress is a
+	# per-SUPERBLOCK option -- a mount that omits it sets the whole filesystem to no
+	# compression, and whichever subvolume mounts last wins. A mixed set of lines gave
+	# two units from one build, one compressing and one not.
 	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/" "btrfs" "noatime,subvol=@"
 	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/usr" "btrfs" "noatime,ro,subvol=@usr"
 	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/var" "btrfs" "noatime,subvol=@var"
