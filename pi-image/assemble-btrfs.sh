@@ -158,14 +158,10 @@ echo "== write /etc/fstab (UUID=$UUID, boot=$BOOTFS_SPEC) =="
 	# btrfs is self-consistent (CoW) and is not fsck'd at boot, so the pass field is 0
 	# on every btrfs line (the ext4-style 1/2 passes don't apply).
 	#
-	# No compression. Unclear-to-negative performance on this hardware and no proven
-	# use case: the card is 30 GB and ~6% used, so space was never the constraint, and
-	# zstd costs CPU on every read and write of anything compressible.
-	#
-	# If it ever comes back it goes on EVERY line or none. compress is a
-	# per-SUPERBLOCK option -- a mount that omits it sets the whole filesystem to no
-	# compression, and whichever subvolume mounts last wins. A mixed set of lines gave
-	# two units from one build, one compressing and one not.
+	# No compression -- no proven reason to turn it on. If it ever comes back it goes
+	# on every line: btrfs mount options are per-filesystem, only the first mounted
+	# subvolume's take effect (btrfs(5)), and a mixed set gave two units from one
+	# build behaving differently.
 	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/" "btrfs" "noatime,subvol=@"
 	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/usr" "btrfs" "noatime,ro,subvol=@usr"
 	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/var" "btrfs" "noatime,subvol=@var"
