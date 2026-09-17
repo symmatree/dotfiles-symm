@@ -1,6 +1,6 @@
 name: "build-pi-image"
 
-# Convert the official Raspberry Pi OS Lite (Bookworm, arm64) image into the
+# Convert the official Raspberry Pi OS Lite (Trixie, arm64) image into the
 # fleet btrfs-subvolume layout (per-role, via the matrix below) and publish each
 # flashable .img as an artifact. MUST run on an arm64 runner: the build loop-mounts + mkfs.btrfs
 # (needs a btrfs-capable kernel) and chroots the arm64 rootfs natively to

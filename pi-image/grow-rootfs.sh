@@ -7,29 +7,23 @@
 # reaches the end of the disk, so it costs a few reads per boot and survives the
 # card being cloned onto a larger one.
 #
-# WHY THIS EXISTS. A flashed image is only as large as it was built (~3.6 GiB),
-# so the rest of the card is unpartitioned until something grows it. Raspberry Pi
-# OS does that in two stages and this image has neither:
+# WHY THIS EXISTS. A flashed image is only as large as it was built, so the rest
+# of the card stays unpartitioned until something grows it -- and btrfs near
+# ENOSPC starts refusing writes that `df` says should fit.
 #
-#   partition   init=/usr/lib/raspi-config/init_resize.sh -- our cmdline carries
-#               no init= at all, so it never runs.
-#   filesystem  resize2fs_once.service -- it is `resize2fs $(findmnt / -o source
-#               -n)`, which on btrfs yields subvolume notation (/dev/mmcblk0p2[/@])
-#               and is the wrong tool besides. Masked at build time.
+# Raspberry Pi OS has its own first-boot resize, armed by a bare `resize` token
+# in cmdline.txt that build-image.sh strips (see the note there). This runs on
+# EVERY boot instead of only the first: a few reads, in exchange for growing a
+# card cloned onto a larger one, or one whose root was rewritten in place by a
+# staged re-flash (coordinator#310), with no cmdline surgery.
 #
-# Left unreplaced that stranded both deployed units at ~3 GiB of a 32 GB card,
-# with the coordinator at 1 MiB unallocated -- btrfs near ENOSPC before anything
-# was installed, which is where it starts failing writes that `df` says should fit.
-#
-# No two-stage dance and no reboot: btrfs grows ONLINE. The vendor's split exists
-# only because resize2fs cannot grow a mounted ext4 root.
+# btrfs grows ONLINE, so there is no two-stage dance and no reboot.
 set -euo pipefail
 
 log() { echo "grow-rootfs: $*"; }
 
 # findmnt --nofsroot is load-bearing: without it btrfs returns /dev/mmcblk0p2[/@]
-# and every downstream tool chokes on the subvolume suffix. That is the exact
-# defect that made resize2fs_once fail on every card.
+# and every downstream tool chokes on the subvolume suffix.
 part="$(findmnt -n -o SOURCE --nofsroot /)"
 [ -b "$part" ] || {
 	log "root source '$part' is not a block device; nothing to do"
@@ -59,11 +53,10 @@ fi
 log "growing ${part} (p${pnum}) to fill /dev/$disk -- $((slack / 2048)) MiB unpartitioned"
 
 # sfdisk, not parted. `parted -s` does NOT answer its own "Partition is being
-# used. Are you sure you want to continue?" -- it prints the warning and exits 1,
-# which is how this failed on campod-se. sfdisk takes its input as a script by
-# design, so there is no prompt to answer: ",+" means keep the start, extend to
-# the end of the disk. It also leaves the MBR disk identifier alone, which
-# matters because the image pins root=PARTUUID=c0dec0de-02.
+# used. Are you sure you want to continue?" -- it prints the warning and exits 1.
+# sfdisk takes its input as a script by design, so there is no prompt: ",+" keeps
+# the start and extends to the end of the disk. It also leaves the MBR disk
+# identifier alone, which matters because cmdline.txt pins root=PARTUUID.
 #
 #   --no-reread       do not re-read the table afterwards; that ioctl fails while
 #                     a partition on the disk is mounted
