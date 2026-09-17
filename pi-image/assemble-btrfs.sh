@@ -158,10 +158,10 @@ echo "== write /etc/fstab (UUID=$UUID, boot=$BOOTFS_SPEC) =="
 	# btrfs is self-consistent (CoW) and is not fsck'd at boot, so the pass field is 0
 	# on every btrfs line (the ext4-style 1/2 passes don't apply).
 	#
-	# No compression -- no proven reason to turn it on. If it ever comes back it goes
-	# on every line: btrfs mount options are per-filesystem, only the first mounted
-	# subvolume's take effect (btrfs(5)), and a mixed set gave two units from one
-	# build behaving differently.
+	# No compression -- no proven reason to turn it on. If it ever comes back it
+	# goes on EVERY line: btrfs mount options are per-filesystem and only the first
+	# mounted subvolume's take effect (btrfs(5)), so a mixed set makes two units
+	# from one build behave differently.
 	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/" "btrfs" "noatime,subvol=@"
 	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/usr" "btrfs" "noatime,ro,subvol=@usr"
 	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/var" "btrfs" "noatime,subvol=@var"

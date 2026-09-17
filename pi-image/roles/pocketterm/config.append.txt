@@ -1,10 +1,9 @@
 # --- PocketTerm35 (pipboy) role additions ---
 # Appended verbatim to config.txt by pi-image/build-image.sh. The explicit [all]
-# header is load-bearing: a stock config.txt can end inside a [cm5] section, and a
-# Pi 5 *Model B* ignores [cm5] -- which is exactly how the keyboard and the RP2040
-# HID (backlight/brightness) failed to enumerate on the first hand-built card
-# (facts/PocketTerm35, tiles #599). Forcing [all] here guarantees these lines are
-# unconditional regardless of where the vendor file left off.
+# header is load-bearing: a vendor config.txt can end inside a [cm5] section, and
+# a Pi 5 *Model B* ignores [cm5] -- so the keyboard and the RP2040 HID
+# (backlight/brightness) would silently fail to enumerate. Forcing [all] makes
+# these unconditional wherever the vendor file left off.
 [all]
 
 # 3.5" 640x480 IPS panel, Pi 5 variant. Overlay ships in 3.5HDMI_E_DTBO.zip and is

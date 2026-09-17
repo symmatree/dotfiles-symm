@@ -7,27 +7,17 @@
 # reaches the end of the disk, so it costs a few reads per boot and survives the
 # card being cloned onto a larger one.
 #
-# WHY THIS EXISTS. A flashed image is only as large as it was built (~3.6 GiB),
-# so the rest of the card is unpartitioned until something grows it. Left
-# unreplaced that stranded both deployed units at ~3 GiB of a 32 GB card, with
-# the coordinator at 1 MiB unallocated -- btrfs near ENOSPC before anything was
-# installed, which is where it starts failing writes that `df` says should fit.
+# WHY THIS EXISTS. A flashed image is only as large as it was built, so the rest
+# of the card stays unpartitioned until something grows it -- and btrfs near
+# ENOSPC starts refusing writes that `df` says should fit.
 #
-# Raspberry Pi OS has its own mechanism and this image deliberately does not use
-# it. The vendor's runs entirely from the initramfs, switched on by a bare
-# `resize` token in cmdline.txt: local-premount/resize_early grows the partition
-# with parted, local-bottom/set_partuuid rewrites the MBR disk identifier from
-# /dev/hwrng, and rpi-resize.service pulls in systemd-growfs-root to grow the
-# filesystem. build-image.sh strips that token, because a randomised disk id
-# makes PARTUUIDs differ per card -- and because two mechanisms racing to grow
-# one partition is worse than either alone.
+# Raspberry Pi OS has its own first-boot resize, armed by a bare `resize` token
+# in cmdline.txt that build-image.sh strips (see the note there). This runs on
+# EVERY boot instead of only the first: a few reads, in exchange for growing a
+# card cloned onto a larger one, or one whose root was rewritten in place by a
+# staged re-flash (coordinator#310), with no cmdline surgery.
 #
-# The trade taken here is that this runs on EVERY boot instead of only the first.
-# That costs a few reads and buys idempotence: a card cloned onto a larger one,
-# or one whose root was rewritten in place by a staged re-flash (coordinator#310),
-# is grown on the next boot with no cmdline surgery.
-#
-# No two-stage dance and no reboot: btrfs grows ONLINE.
+# btrfs grows ONLINE, so there is no two-stage dance and no reboot.
 set -euo pipefail
 
 log() { echo "grow-rootfs: $*"; }
@@ -63,11 +53,10 @@ fi
 log "growing ${part} (p${pnum}) to fill /dev/$disk -- $((slack / 2048)) MiB unpartitioned"
 
 # sfdisk, not parted. `parted -s` does NOT answer its own "Partition is being
-# used. Are you sure you want to continue?" -- it prints the warning and exits 1,
-# which is how this failed on campod-se. sfdisk takes its input as a script by
-# design, so there is no prompt to answer: ",+" means keep the start, extend to
-# the end of the disk. It also leaves the MBR disk identifier alone, which
-# matters because the image pins root=PARTUUID=c0dec0de-02.
+# used. Are you sure you want to continue?" -- it prints the warning and exits 1.
+# sfdisk takes its input as a script by design, so there is no prompt: ",+" keeps
+# the start and extends to the end of the disk. It also leaves the MBR disk
+# identifier alone, which matters because cmdline.txt pins root=PARTUUID.
 #
 #   --no-reread       do not re-read the table afterwards; that ioctl fails while
 #                     a partition on the disk is mounted
