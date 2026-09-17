@@ -98,6 +98,14 @@ sudo dd if=<role>-pi-<date>.img of=/dev/sdX bs=4M status=progress conv=fsync
 Per-unit identity (hostname, user, SSH key, WiFi) is injected at flash time -- see
 [`provision/`](provision/).
 
+### Partition geometry
+
+`BOOT_MB=1536`, `SLACK_MB=1536`. The FAT partition is oversized on purpose: boot content is
+~76 MiB, and the rest is staging room for a compressed image during a touchless re-flash
+([coordinator#312](https://github.com/symmatree/coordinator/issues/312)), which streams
+`unzip | dd` out of p1 onto p2. It cannot be resized in place -- p2 starts immediately after
+p1 -- so a change here costs every device a full reflash.
+
 The image ships `root=PARTUUID=<btrfs p2> rootfstype=btrfs rootflags=subvol=@` and `auto_initramfs=1`.
 If it does not come up, the boot config (cmdline/initramfs) is where to iterate -- the filesystem
 itself is verified.

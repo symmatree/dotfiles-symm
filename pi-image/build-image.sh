@@ -70,7 +70,18 @@ BOOTSTAGE="$BUILD/bootfs" # vendor /boot/firmware staged + fixed up here
 OUT_IMG="${2:-$BUILD/${ROLE}-pi-$(date +%Y%m%d).img}"
 
 # Partition geometry of the target image.
-BOOT_MB=512   # FAT32 /boot/firmware
+#
+# BOOT_MB is sized to stage a compressed image for a touchless re-flash
+# (coordinator#312), not for boot content -- boot content is 75.6 MiB across 435
+# files, measured on a built campod artifact. The rest is staging: the flasher
+# streams `unzip | dd` out of p1 onto p2, so p1 only has to hold the zip, and one
+# at a time. 1536 - 76 leaves ~1460 MiB against an 809 MiB artifact.
+#
+# THIS SIZE CANNOT BE CHANGED IN PLACE. p2 begins right after p1, so growing p1
+# means rewriting the whole card. Every device pays one full reflash to adopt it,
+# which is why it rides the same flash as a suite change rather than arriving on
+# its own.
+BOOT_MB=1536  # FAT32 /boot/firmware + staging for coordinator#312
 SLACK_MB=1536 # free space on top of the rootfs footprint
 
 require_root() {
@@ -83,7 +94,7 @@ require_root() {
 require_tools() {
 	local miss=0 t
 	for t in xz curl sha256sum losetup mount umount rsync parted \
-		mkfs.vfat mkfs.btrfs blkid sfdisk chroot unzip chattr lsattr; do
+		mkfs.vfat mkfs.btrfs blkid sfdisk chroot unzip chattr lsattr cpio; do
 		command -v "$t" >/dev/null 2>&1 || {
 			echo "missing tool: $t" >&2
 			miss=1
@@ -356,6 +367,74 @@ install_sudoers() {
 }
 
 # =============================================================================
+# 2f. flasher boot path
+#     Re-image p2 without pulling the card (coordinator#312). You cannot
+#     overwrite the filesystem you are running from, so something else has to be
+#     running: an initramfs whose /init never pivots to a real root. The whole
+#     system lives in RAM and nothing holds p2 open.
+#
+#     Selected by TRYBOOT. `reboot '0 tryboot'` boots tryboot.txt instead of
+#     config.txt EXACTLY ONCE; if the board does not come up, a power cycle falls
+#     back to config.txt. The rollback for the boot step is the firmware's.
+#
+#     IT DOES THE REAL WRITE -- see flasher-init.sh, which is its /init. The
+#     guards are on the inputs rather than on the action, and a fresh card with
+#     nothing staged is a report-and-reboot no-op.
+#
+#     The image is streamed `unzip | dd`, so p1 holds the 809 MiB zip and never
+#     the 4.8 GB raw form, which is why BOOT_MB is sized the way it is.
+# =============================================================================
+FLASH_DIR=flash # staged image lives at /boot/firmware/$FLASH_DIR/image.{zip,sha256}
+
+install_flasher_boot() {
+	echo "== build flasher initramfs + tryboot.txt =="
+
+	# busybox-static comes out of the chroot apt pass, which has already torn its
+	# binds down by now -- so this step is host-side: copy the binary, build the
+	# cpio, write the configs.
+	local fdir="$BUILD/flasher" bb=""
+	rm -rf "$fdir"
+	mkdir -p "$fdir"/{bin,proc,sys,dev,mnt}
+	for c in usr/bin/busybox bin/busybox; do
+		[ -x "$ROOTFS/$c" ] && bb="$ROOTFS/$c" && break
+	done
+	[ -n "$bb" ] || {
+		echo "!! busybox-static did not land in the rootfs" >&2
+		exit 1
+	}
+	cp "$bb" "$fdir/bin/busybox"
+
+	sed -e "s|@FLASH_DIR@|$FLASH_DIR|g" "$HERE/flasher-init.sh" >"$fdir/init"
+	chmod 0755 "$fdir/init"
+
+	(cd "$fdir" && find . | cpio -o -H newc --quiet | gzip -9) >"$BOOTSTAGE/initramfs-flash.gz"
+
+	# No root= at all: with an initramfs present and no root device named, the
+	# kernel runs /init from the cpio and never looks for a real root.
+	echo "console=serial0,115200 console=tty1 panic=30" >"$BOOTSTAGE/cmdline-flash.txt"
+
+	# tryboot.txt is a full config, not an overlay -- the firmware reads one or the
+	# other. Start from the real config so the board comes up the same way (UART,
+	# overlays, arm_boost), then point it at the flasher.
+	{
+		cat "$BOOTSTAGE/config.txt"
+		echo ""
+		echo "# --- flasher boot, reached only by: reboot '0 tryboot' ---"
+		echo "initramfs initramfs-flash.gz followkernel"
+		echo "cmdline=cmdline-flash.txt"
+		echo "auto_initramfs=0"
+	} >"$BOOTSTAGE/tryboot.txt"
+
+	# The staging directory ships empty, so the bench side has somewhere to put
+	# the image without having to create it on a read-only-ish boot partition.
+	mkdir -p "$BOOTSTAGE/$FLASH_DIR"
+
+	ls -l "$BOOTSTAGE/initramfs-flash.gz" "$BOOTSTAGE/tryboot.txt" "$BOOTSTAGE/cmdline-flash.txt"
+	echo "== tryboot.txt tail: =="
+	tail -n 5 "$BOOTSTAGE/tryboot.txt"
+}
+
+# =============================================================================
 # 3. regenerate the initramfs WITH btrfs, natively, via chroot
 #    THE CRUX. The stock kernel has btrfs as a *module*, so a btrfs root needs an
 #    initramfs that carries and modprobes btrfs before it can mount /. The vendor
@@ -407,7 +486,7 @@ regenerate_initramfs() {
 	chroot "$ROOTFS" /bin/bash -eu -c '
 		export DEBIAN_FRONTEND=noninteractive
 		apt-get update -qq
-		apt-get install -y -qq btrfs-progs
+		apt-get install -y -qq btrfs-progs busybox-static
 		update-initramfs -u -k all
 	'
 
@@ -608,6 +687,7 @@ main() {
 	write_manifest
 	install_sudoers
 	regenerate_initramfs
+	install_flasher_boot
 	build_target
 	report
 }
