@@ -184,11 +184,21 @@ mount -t btrfs -o "subvol=@var" "$LOOP" "$WORK/varmnt" 2>/dev/null && {
 	umount "$WORK/varmnt"
 }
 
-# 5i. /scratch is nodatacow (ephemeral WAL/sim; never snapshotted)
+# 5i. @scratch is nodatacow -- checked as the INODE FLAG, not a mount option.
+# btrfs-specific mount options are per-filesystem and only the first mounted
+# subvolume's take effect, so a nodatacow on this fstab line would read as set
+# here and be silently absent on a booted card (coordinator#309).
+SCR_ATTRS="$(lsattr -d "$MNT/scratch" 2>/dev/null | awk '{print $1}')"
+case "$SCR_ATTRS" in
+*C*) pass "@scratch is nodatacow (lsattr: $SCR_ATTRS)" ;;
+*) fail "@scratch not +C (lsattr: $SCR_ATTRS)" ;;
+esac
+
+# ...and that the inert mount option is NOT what we rely on.
 SCR_OPTS="$(findmnt -rno OPTIONS "$MNT/scratch" 2>/dev/null || true)"
 case ",$SCR_OPTS," in
-*,nodatacow,*) pass "/scratch nodatacow (opts: $SCR_OPTS)" ;;
-*) fail "/scratch not nodatacow (opts: $SCR_OPTS)" ;;
+*,nodatacow,*) fail "/scratch fstab line carries nodatacow, which does not take effect (opts: $SCR_OPTS)" ;;
+*) pass "/scratch has no misleading nodatacow mount option (opts: $SCR_OPTS)" ;;
 esac
 
 echo

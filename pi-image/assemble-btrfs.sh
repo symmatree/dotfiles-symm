@@ -21,8 +21,8 @@
 #   create @ @usr @var @home @data @scratch @snapshots
 #   populate each subvol from the right slice of $ROOTFS
 #   create the mountpoint dirs the fstab needs (incl. @data's nest under @var)
-#   chattr +C on @var/lib/docker  (CoW-on-CoW footgun for docker's overlay2)
-#   write /etc/fstab into @  (@data mounts at $DATA_MOUNT; @scratch nodatacow)
+#   chattr +C on @var/lib/docker and @scratch  (nodatacow; see below)
+#   write /etc/fstab into @  (@data mounts at $DATA_MOUNT)
 #   emit the kernel cmdline fragment to $OUT_DIR/cmdline.fragment
 #
 # shellcheck disable=SC2015  # cleanup uses the benign `cond && act || true` idiom
@@ -116,7 +116,8 @@ echo "== populate @data from $DATA_MOUNT (if present in the rootfs) =="
 [ -d "$ROOTFS$DATA_MOUNT" ] &&
 	"${RS[@]}" "$ROOTFS$DATA_MOUNT"/ "$TOP/@data"/
 
-# @scratch is ephemeral (WAL/sim); it ships empty and is never populated.
+# @scratch is ephemeral (WAL/sim); it ships empty and is never populated, which
+# is also what lets chattr +C below cover everything that will ever live in it.
 
 # ---- create the mountpoint directories the fstab needs ----------------------
 # A subvol mounted at /X needs the dir /X to exist in whatever subvol owns that
@@ -131,11 +132,36 @@ echo "== create nested mountpoints in @var =="
 mkdir -p "$TOP/@var${DATA_UNDER_VAR}"
 mkdir -p "$TOP/@var"/lib/docker
 
-# ---- chattr +C on docker's data-root (CoW-on-CoW footgun) -------------------
-# docker overlay2 does its own CoW; layering btrfs CoW under it multiplies write
-# amplification badly. +C on the (empty) dir makes new files nodatacow.
-echo "== chattr +C @var/lib/docker =="
+# ---- nodatacow, via the inode flag ------------------------------------------
+# Per-directory with chattr +C, NOT a mount option. btrfs(5): "Most mount options
+# apply to the whole filesystem and only options in the first mounted subvolume
+# will take effect [...] you can't set per-subvolume nodatacow". / is mounted from
+# the initramfs before fstab is read, so @ is always the first mounted subvolume
+# and a nodatacow on any later line is discarded with no error and no warning.
+#
+# +C is inherited by files created afterwards and does not convert existing ones,
+# so it only means anything on an empty directory. Both of these are empty here.
+#
+#   @var/lib/docker  overlay2 does its own CoW; btrfs CoW underneath multiplies
+#                    write amplification badly
+#   @scratch         exists to BE the write-heavy append-and-overwrite area
+#                    (WAL/sim), which is the pattern CoW is worst at
+echo "== chattr +C @var/lib/docker, @scratch =="
 chattr +C "$TOP/@var/lib/docker"
+chattr +C "$TOP/@scratch"
+
+# Read it back: a flag that silently did not take is the exact failure this
+# replaces, so do not just announce it.
+for d in "$TOP/@var/lib/docker" "$TOP/@scratch"; do
+	attrs="$(lsattr -d "$d" | awk '{print $1}')"
+	case "$attrs" in
+	*C*) echo "   ${d#"$TOP"/}: $attrs" ;;
+	*)
+		echo "!! chattr +C did not take on ${d#"$TOP"/} (lsattr: $attrs)" >&2
+		exit 1
+		;;
+	esac
+done
 
 # ---- write /etc/fstab into @ ------------------------------------------------
 # One btrfs filesystem => one UUID shared by every subvol; the subvol= option is
@@ -158,16 +184,18 @@ echo "== write /etc/fstab (UUID=$UUID, boot=$BOOTFS_SPEC) =="
 	# btrfs is self-consistent (CoW) and is not fsck'd at boot, so the pass field is 0
 	# on every btrfs line (the ext4-style 1/2 passes don't apply).
 	#
-	# No compression -- no proven reason to turn it on. If it ever comes back it
-	# goes on EVERY line: btrfs mount options are per-filesystem and only the first
-	# mounted subvolume's take effect (btrfs(5)), so a mixed set makes two units
-	# from one build behave differently.
+	# Nothing btrfs-specific here beyond subvol=. Those options are per-filesystem
+	# and only the FIRST mounted subvolume's take effect (btrfs(5)) -- always @,
+	# mounted from the initramfs before fstab is read -- so anything set on a later
+	# line is silently discarded, and a mixed set makes two units from one build
+	# behave differently. nodatacow is done with chattr +C above for that reason;
+	# compression is off, and if it ever returns it goes on EVERY line.
 	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/" "btrfs" "noatime,subvol=@"
 	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/usr" "btrfs" "noatime,ro,subvol=@usr"
 	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/var" "btrfs" "noatime,subvol=@var"
 	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/home" "btrfs" "noatime,subvol=@home"
 	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "$DATA_MOUNT" "btrfs" "noatime,subvol=@data"
-	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/scratch" "btrfs" "noatime,nodatacow,subvol=@scratch"
+	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/scratch" "btrfs" "noatime,subvol=@scratch"
 	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/.snapshots" "btrfs" "noatime,subvol=@snapshots"
 	# FAT firmware partition -- fstab line only for the spike (no FAT part here).
 	# Real image keys this by PARTUUID (BOOTFS_SPEC) so no stray 'bootfs' card mounts here.
