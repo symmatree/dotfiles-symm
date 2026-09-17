@@ -57,14 +57,15 @@ new `roles/<name>.env` and adding it to the matrix in `build-pi-image.yaml`.
 | `assemble-btrfs.sh` | lay a populated rootfs into the layout: `mkfs.btrfs -m single`, create `@ @usr @var @home @data @scratch @snapshots`, populate each from the right rootfs slice, `chattr +C` docker, write `/etc/fstab` + emit the cmdline fragment | **done, verified** |
 | `test-assemble.sh` | local proof: dummy rootfs -> loopback image -> assemble -> mount per the generated fstab -> assert (all seven subvols, exclusive split, `ro`-`/usr` + `remount,rw` *of the assembled fstab* — note the **booted** `/usr` comes up `rw`, see [#96](https://github.com/symmatree/coordinator/issues/96), `@data` nesting under `/var`, docker `+C`). Needs a btrfs-capable kernel + `sudo`. | done |
 | `verify-in-vm.sh` | run `test-assemble.sh` inside a throwaway KVM guest -- for hosts whose kernel lacks btrfs (e.g. the Talos notebook host). | done |
-| `build-image.sh` | **convert path.** Download+verify the pinned official RPi OS Lite Bookworm arm64 image, extract its rootfs + boot partition, natively chroot the arm64 rootfs to regenerate the initramfs **with btrfs**, build a fresh MBR image (FAT `bootfs` p1 + btrfs p2 via `assemble-btrfs.sh`), write the image manifest, fix up `cmdline.txt`/`config.txt`. arm64 + btrfs kernel only (CI: `ubuntu-24.04-arm`). | **boots on hardware** |
-| `provision/` | per-unit identity at flash time -- `firstrun.sh` template + `Flash-Card.ps1`. FAT-partition only, so the flashing host needs no btrfs/WSL. | done |
+| `build-image.sh` | **convert path.** Download+verify the pinned official RPi OS Lite Trixie arm64 image, extract its rootfs + boot partition, natively chroot the arm64 rootfs to regenerate the initramfs **with btrfs**, build a fresh MBR image (FAT `bootfs` p1 + btrfs p2 via `assemble-btrfs.sh`), write the image manifest, fix up `cmdline.txt`/`config.txt`. arm64 + btrfs kernel only (CI: `ubuntu-24.04-arm`). | **boots on hardware** |
+| `provision/` | per-unit identity at flash time -- `firstrun.sh` template + `Flash-Card.ps1`. FAT-partition only, so the flashing host needs no btrfs/WSL. | **being replaced by cloud-init `user-data`, coordinator#238** |
 | `.github/workflows/build-pi-image.yaml` | run `build-image.sh` -> upload the compressed `.img` on `ubuntu-24.04-arm`, per role. | done |
 | mmdebstrap rootfs config + genimage | the scratch build path | **TODO** |
 
-Pinned upstream: `2025-05-13-raspios-bookworm-arm64-lite.img.xz`
-(sha256 `62d025b9...ed45`) -- the last *Bookworm* Lite arm64 release (2025-10 onward raspios is
-Trixie). Bump URL+date+sha together in `build-image.sh`.
+Pinned upstream: `2026-09-15-raspios-trixie-arm64-lite.img.xz` (sha256 `cdf4f3bf...27e5`), the
+current Lite arm64 release. Bump URL+date+sha together in `build-image.sh` -- and move
+`containers/campod-camera`'s `RPI_SUITE` in the same window, since the container installs
+libcamera from the same Pi archive suite as the host.
 
 ## Status -- boots on all three roles
 
@@ -114,22 +115,30 @@ The vehicle is the vendor's own mechanism, which this image keeps working:
    is appended to `cmdline.txt`.
 2. The initramfs script `imager_fixup` (from `raspberrypi-sys-mods`, present in the pinned
    base and carried into our regenerated initramfs) reads `/boot/firmware` out of the root
-   fs's `/etc/fstab`, mounts it rw, and rewrites `/boot/` -> `/boot/firmware/` in both
-   `cmdline.txt` and the script's self-cleanup tail. It resolves our `PARTUUID=` spec fine.
-3. systemd runs the script: hostname -> SSH keys -> `userconf` rename (`usermod -m`, so
-   `~/.ssh` follows the home dir) -> `imager_custom set_wlan` (writes a NetworkManager
+   fs's `/etc/fstab` -- it resolves our `PARTUUID=` spec fine -- mounts it rw, rewrites
+   `/boot/` -> `/boot/firmware/` in both `cmdline.txt` and the script's self-cleanup tail,
+   and then **reboots**. So boot 1 never reaches systemd.
+3. On boot 2 systemd runs the script: hostname -> SSH keys -> `userconf` rename (`usermod -m`,
+   so `~/.ssh` follows the home dir) -> `imager_custom set_wlan` (writes a NetworkManager
    keyfile) -> self-delete -> reboot.
 
-This does **not** depend on `init=/usr/lib/raspberrypi-sys-mods/firstboot`, which
-`build-image.sh` strips (it runs `resize2fs`, which is meaningless on btrfs). `systemd.run=`
-is a systemd feature. Consequences of stripping it: `custom.toml` is **not** applied on this
-image (that is the `firstboot` script's job), and SSH host keys come from
-`regenerate_ssh_host_keys.service` instead (enabled in the base image, so still covered).
+SSH host keys come from `regenerate_ssh_host_keys.service`, enabled in the base image.
+Passwordless sudo comes from `/etc/sudoers.d/010_pi-nopasswd`, which the base image no longer
+ships and `build-image.sh` installs instead; the name is the vendor's so that `userconf`'s
+rename still finds it.
 
-Bookworm has no `wpa_supplicant.conf`-on-boot-partition path any more -- WiFi is a
-NetworkManager keyfile on the *root* filesystem -- so `firstrun.sh` is the only FAT-only way
-to preconfigure WiFi. `userconf.txt` and an empty `ssh` file still work for the user account
-and sshd, but cannot carry WiFi.
+There is no `wpa_supplicant.conf`-on-boot-partition path any more -- WiFi is a
+NetworkManager keyfile on the *root* filesystem -- so a FAT-only flow has to write it
+indirectly. `userconf.txt` and an empty `ssh` file still work for the user account and sshd,
+but cannot carry WiFi.
+
+> [!NOTE]
+> This flow is being replaced by cloud-init `user-data`
+> ([coordinator#238](https://github.com/symmatree/coordinator/issues/238)). `firstrun.sh` still
+> works -- `imager_fixup` and `imager_custom` are both still shipped -- but the vendor moved
+> its own first-boot path to cloud-init (`raspberrypi-sys-mods` `6916ea2`, *"Functionality
+> replaced by cloud-init and initramfs"*), and the template here was reverse-engineered from an
+> Imager run against a *Legacy/Bookworm* entry, i.e. a different OS from the one this builds.
 
 ## Run the test
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# build-image.sh -- convert the official Raspberry Pi OS Lite (Bookworm, arm64)
+# build-image.sh -- convert the official Raspberry Pi OS Lite (Trixie, arm64)
 # image into the coordinator btrfs-subvolume layout and emit a flashable .img.
 #
 # This is the "convert" pipeline (as opposed to the mmdebstrap "build from
@@ -27,43 +27,16 @@
 set -euo pipefail
 
 # ---- pinned upstream image ---------------------------------------------------
-# Latest Raspberry Pi OS Lite arm64 *Bookworm* release. (2025-10 onward the
-# vendor moved raspios to Trixie; 2025-05-13 is the last Bookworm Lite.) Pinned
-# by URL + sha256 so a rebuild is reproducible and a swapped-out upstream is
-# caught. To bump: change all three of URL/date/sha together.
+# The current Raspberry Pi OS Lite arm64 release. Pinned by URL + sha256 so a
+# rebuild is reproducible and a swapped-out upstream is caught. To bump: change
+# URL, date and sha together.
 #
-# ---- BUMPING THE SUITE IS A CROSS-REPO CHANGE, NOT A LOCAL ONE ----------------
-# This pin is the fleet's OS suite, and the coordinator repo's containers track
-# it. coordinator#214 bumped the camera container (then containers/pod-camera,
-# renamed to containers/campod-camera in coordinator#228) to trixie on the
-# reasoning that "the host Pi OS is trixie" -- true of what the vendor currently
-# ships, false of what this file pins -- creating a host/container suite
-# mismatch; reverted in coordinator#219. If this pin moves,
-# containers/campod-camera's RPI_SUITE has to move in the same window.
-#
-# Two things recorded from that revert for whoever eventually moves to Trixie.
-# Both are coordinator#219's findings; they are NOT at the same evidence grade,
-# so treat them differently:
-#
-#   - REPRODUCED. Trixie's apt verifies signatures with Sequoia (sqv), whose
-#     policy has rejected SHA-1 since 2026-02-01. The raw
-#     archive.raspberrypi.com/debian/raspberrypi.gpg.key carries digest algo 2
-#     (SHA-1) self-signatures, so the Pi archive reads as UNSIGNED. Confirmed by
-#     reproducing the build failure on an arm64 CI runner --
-#       "Signing key on CF8A1AF5... is not bound ... SHA1 is not considered
-#        secure since 2026-02-01"
-#     -- and then by diffing the key packets: raspberrypi-archive-keyring
-#     2025.1+rpt1 ships the same fingerprint with digest algo 10 (SHA-512).
-#     The dangerous part is the presentation: an unsigned-repo failure here
-#     surfaces looking like a network fault, not a trust failure.
-#
-#   - READ, NOT RUN. Bookworm is not holding anything back: its Pi archive has
-#     libcamera 0.5.2 per the archive's Packages index, and the
-#     ExposureTimeMode/AnalogueGainMode split landed in 0.4. Nobody has executed
-#     that combination to confirm it.
-# ------------------------------------------------------------------------------
-RPIOS_URL="https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2025-05-13/2025-05-13-raspios-bookworm-arm64-lite.img.xz"
-RPIOS_SHA256="62d025b9bc7ca0e1facfec74ae56ac13978b6745c58177f081d39fbb8041ed45"
+# THE SUITE IS A CROSS-REPO PIN. The camera runs in a container that installs
+# libcamera from the same Pi archive suite as the host, so the two have to match.
+# If this moves, containers/campod-camera's RPI_SUITE moves in the same window
+# (coordinator#219).
+RPIOS_URL="https://downloads.raspberrypi.com/raspios_lite_arm64/images/raspios_lite_arm64-2026-09-15/2026-09-15-raspios-trixie-arm64-lite.img.xz"
+RPIOS_SHA256="cdf4f3bfac35ae947b46e4e767f935453810549779ac3290e05a6754aee627e5"
 
 # ---- paths -------------------------------------------------------------------
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -267,9 +240,8 @@ install_grow_rootfs() {
 	install -D -m 0755 "$HERE/grow-rootfs.sh" "$ROOTFS/usr/local/sbin/grow-rootfs"
 
 	# Unit in /etc/systemd/system, not /usr/lib, so it lives in @ and does not
-	# depend on @usr being writable. Ordered before multi-user.target: the
-	# provisioning boot never reaches that target, so this first runs on the boot
-	# after firstrun.sh -- before anything that writes at volume.
+	# depend on @usr being writable. Ordered before multi-user.target so the card
+	# is full-size before anything that writes at volume starts.
 	mkdir -p "$ROOTFS/etc/systemd/system/multi-user.target.wants"
 	cat >"$ROOTFS/etc/systemd/system/grow-rootfs.service" <<-'EOF'
 		[Unit]
@@ -296,37 +268,6 @@ install_grow_rootfs() {
 	ls -l "$ROOTFS/usr/local/sbin/grow-rootfs" \
 		"$ROOTFS/etc/systemd/system/grow-rootfs.service" \
 		"$ROOTFS/etc/systemd/system/multi-user.target.wants/grow-rootfs.service"
-}
-
-# =============================================================================
-# 2d. /boot/firstrun.sh -> firmware/firstrun.sh
-#     THE FIRST-BOOT FIX. rpi-imager appends
-#       systemd.run=/boot/firstrun.sh
-#     to cmdline.txt at flash time and writes the script to the FAT partition,
-#     which Bookworm mounts at /boot/FIRMWARE. The vendor squares that circle with
-#     an initramfs script (raspberrypi-sys-mods' imager_fixup) that rewrites
-#     cmdline.txt to /boot/firmware/firstrun.sh -- but that rewrite lands on the
-#     CARD, for the NEXT boot. The kernel has already read this boot's cmdline.
-#
-#     On a stock card that is fine, because boot 1 is consumed by
-#     init=/usr/lib/raspberrypi-sys-mods/firstboot: systemd is not PID 1, so
-#     systemd.run is inert, and firstboot reboots into the corrected cmdline.
-#
-#     We strip that init= (it randomises the MBR disk identifier, which would
-#     break this image's pinned root=PARTUUID), so boot 1 IS the systemd boot and
-#     it execs a path that does not exist. The unit fails to
-#     START, and systemd-run-generator's default FailureAction=exit powers the
-#     board off -- which presents as a dead unit, not an error. Boot 2 then works,
-#     because imager_fixup fixed the cmdline during boot 1.
-#
-#     A relative symlink makes boot 1 resolve. It costs nothing when no firstrun.sh
-#     is present (a dangling symlink nothing reads) and nothing after provisioning,
-#     when firstrun.sh deletes itself.
-# =============================================================================
-link_firstrun_compat() {
-	echo "== symlink /boot/firstrun.sh -> firmware/firstrun.sh (boot-1 exec path) =="
-	ln -sfn firmware/firstrun.sh "$ROOTFS/boot/firstrun.sh"
-	ls -l "$ROOTFS/boot/firstrun.sh"
 }
 
 # =============================================================================
@@ -402,13 +343,53 @@ write_manifest() {
 }
 
 # =============================================================================
+# 2e. passwordless sudo for the uid-1000 account
+#     Raspberry Pi OS stopped shipping /etc/sudoers.d/010_pi-nopasswd, so the
+#     base image no longer has it. Convergence drives ansible over SSH with
+#     `become: true` and no become password, non-interactively -- without this
+#     every play stops at a sudo prompt on a connection with no tty, which
+#     presents as a hang rather than as an auth failure.
+#
+#     In the image rather than in provisioning, so it is a property of the fleet
+#     and holds however a card was personalised.
+#
+#     The filename is the vendor's on purpose: userconf-pi's `userconf` rewrites
+#     exactly this path when it renames the account
+#     (sed -i "s/^$FIRSTUSER /$NEWNAME /" /etc/sudoers.d/010_pi-nopasswd), so
+#     keeping the name means a rename still lands on its feet.
+#
+#     It grants nothing on the image as built: `pi` ships `!`-locked in
+#     /etc/shadow with /usr/sbin/nologin, so the rule is inert until provisioning
+#     enables the account.
+# =============================================================================
+install_sudoers() {
+	echo "== install /etc/sudoers.d/010_pi-nopasswd =="
+	# A real file, not a symlink: sudo validates the ownership of a symlink's
+	# TARGET and refuses the rule if it does not like what it finds. 0440
+	# root:root is what sudo requires and what the vendor's copy used to be.
+	local sd="$ROOTFS/etc/sudoers.d/010_pi-nopasswd"
+	mkdir -p "$ROOTFS/etc/sudoers.d"
+	cat >"$sd" <<-'EOF'
+		pi ALL=(ALL) NOPASSWD: ALL
+	EOF
+	chown root:root "$sd"
+	chmod 0440 "$sd"
+
+	# Validate with the TARGET's sudo, not the build host's. A sudoers file that
+	# does not parse disables sudo entirely, and the first thing to notice would
+	# be a unit that cannot get root on a device in the field.
+	chroot "$ROOTFS" /usr/sbin/visudo -cf /etc/sudoers.d/010_pi-nopasswd
+	ls -l "$sd"
+}
+
+# =============================================================================
 # 3. regenerate the initramfs WITH btrfs, natively, via chroot
 #    THE CRUX. RPi OS boots with NO initramfs by default and the stock kernel
 #    has btrfs as a *module*, so a btrfs root needs an initramfs that carries
 #    (and modprobes) btrfs before it can mount /. We add btrfs to the initramfs
 #    module list, install btrfs-progs (ships the initramfs btrfs hook), and run
-#    update-initramfs. auto_initramfs=1 (set in step 6) makes the bootloader
-#    load the resulting initramfs8 / initramfs_2712 automatically.
+#    update-initramfs. auto_initramfs=1 (already in the vendor config.txt) makes
+#    the bootloader load the resulting initramfs8 / initramfs_2712 automatically.
 # =============================================================================
 regenerate_initramfs() {
 	echo "== chroot: add btrfs to initramfs and rebuild =="
@@ -435,80 +416,53 @@ regenerate_initramfs() {
 	# installing btrfs-progs fires update-initramfs via its dpkg trigger.
 	echo "MODULES=most" >"$ROOTFS/etc/initramfs-tools/conf.d/coordinator-modules"
 
-	# auto_initramfs must already be on for update-initramfs's hook to emit the
-	# firmware-named initramfs; step 6 writes it, but set it now so the hook that
-	# runs inside this chroot sees it too.
-	if ! grep -q '^auto_initramfs=1' "$BOOTSTAGE/config.txt"; then
-		printf '\n# btrfs root needs an initramfs to modprobe btrfs before mount\nauto_initramfs=1\n' \
-			>>"$BOOTSTAGE/config.txt"
-	fi
+	# auto_initramfs=1 is already in the vendor config.txt, and update-initramfs's
+	# hook reads it to decide whether to emit the firmware-named initramfs at all.
+	# Assert rather than append: if a future base drops it, the board boots with no
+	# initramfs, no btrfs module, and no root -- and nothing else here would notice.
+	grep -q '^auto_initramfs=1' "$BOOTSTAGE/config.txt" || {
+		echo "!! base config.txt has no auto_initramfs=1 -- initramfs would not be loaded" >&2
+		exit 1
+	}
 
 	# btrfs-progs provides `btrfs` + the initramfs hook that pulls the module in.
 	# RPi OS Lite does not ship it by default, so install it (needs network).
 	#
-	# resize2fs_once is masked in the same pass. It is an RPi OS LSB service that
-	# grows the root filesystem on first boot: it resolves the root device via
-	# findmnt, which on btrfs yields subvolume notation (/dev/mmcblk0p2[/@]), and
-	# hands that to resize2fs -- an ext2/3/4 tool that could not grow btrfs even if
-	# the path parsed. It cannot succeed on this image, so it leaves a permanently
-	# failed unit on every card, and a `systemctl --failed` that is never clean is
-	# one nobody reads.
-	#
-	# dphys-swapfile is masked for a different reason: it works, and we do not want
-	# what it does. RPi OS ships it enabled with CONF_SWAPSIZE=512, so every card
-	# gets a half-gigabyte swapfile at /var/swap -- which on this layout lands on the
-	# @var btrfs subvolume, i.e. on the SD card, i.e. on the one medium this whole
-	# design exists to write to as little as possible.
-	#
-	# Measured on campod-se before this change: 512 MiB of swap configured and
-	# ~117 MiB of it in use, with dockerd (29 MiB), containerd (16 MiB) and the
-	# capture process (33 MiB) paged out onto the card. That is sustained SD write
-	# and read traffic in the iowait path of a device whose job is to capture data
-	# at 1 Hz, on a vehicle that loses power without warning.
-	#
-	# An appliance that cannot fit in its RAM should fail visibly, not silently
-	# trade latency and flash wear for the appearance of working. If demand really
-	# exceeds 512 MB, that is a decision to take deliberately -- shrink the demand,
-	# or change the hardware -- not one to have made for us by a vendor default.
+	# update-initramfs -u, NOT -c. The base image ships a prebuilt
+	# /boot/initrd.img-<kver> for both kernels, and -c declines to overwrite one
+	# that already exists. With -c this step would report success while shipping
+	# the vendor's btrfs-less initramfs, and the card would not find its root.
 	chroot "$ROOTFS" /bin/bash -eu -c '
 		export DEBIAN_FRONTEND=noninteractive
 		apt-get update -qq
 		apt-get install -y -qq btrfs-progs
-		systemctl mask resize2fs_once.service
-		systemctl mask dphys-swapfile.service
-		update-initramfs -c -k all
+		update-initramfs -u -k all
 	'
 
-	# The swapfile itself, if the vendor rootfs carried one. Masking the service
-	# stops it being recreated or activated; this reclaims the space it already
-	# occupies. /var/swap on campod-se is dated 2025-05-12 -- the day before the
-	# pinned base image was released -- so it predates our build rather than being
-	# created on first boot.
-	if [ -e "$ROOTFS/var/swap" ]; then
-		echo "== removing inherited swapfile: $(du -h "$ROOTFS/var/swap" | cut -f1) =="
-		rm -f "$ROOTFS/var/swap"
-	else
-		echo "== no /var/swap in the rootfs (nothing to remove) =="
-	fi
-
-	# Prove it rather than announce it: both units masked means a symlink to
-	# /dev/null, and no swap entry anywhere in fstab.
-	echo "== swap/resize units after masking: =="
-	ls -l "$ROOTFS/etc/systemd/system/resize2fs_once.service" \
-		"$ROOTFS/etc/systemd/system/dphys-swapfile.service"
-	echo "== fstab swap entries (expect none): =="
-	grep -c swap "$ROOTFS/etc/fstab" || true
-
-	# Confirm an initramfs was actually produced (glob, not ls|grep).
+	# An initramfs FILE in bootfs proves nothing -- the base ships two. What has to
+	# be true is that OURS carries btrfs, which is the one thing this step exists
+	# to arrange, so check for the module itself.
 	echo "== initramfs artifacts now in bootfs: =="
 	shopt -s nullglob
 	local initrds=("$BOOTSTAGE"/initramfs*)
 	shopt -u nullglob
 	[ "${#initrds[@]}" -gt 0 ] || {
-		echo "!! no initramfs* produced -- boot WILL fail; see writeup" >&2
+		echo "!! no initramfs* in bootfs -- boot WILL fail" >&2
 		exit 1
 	}
 	ls -l "${initrds[@]}"
+
+	# lsinitramfs from inside the chroot, so the check uses the target's own
+	# initramfs-tools and matches however it compressed the module (.ko.xz today).
+	local ird
+	for ird in "${initrds[@]}"; do
+		if chroot "$ROOTFS" lsinitramfs "/boot/firmware/${ird##*/}" | grep -q '/btrfs\.ko'; then
+			echo "   ${ird##*/}: carries btrfs"
+		else
+			echo "!! ${ird##*/} has NO btrfs module -- boot WILL fail" >&2
+			exit 1
+		fi
+	done
 
 	# tear the chroot binds down now (deepest-first) before we touch the rootfs.
 	for m in dev/pts dev sys proc boot/firmware; do
@@ -586,7 +540,7 @@ build_target() {
 # =============================================================================
 # 5. cmdline.txt / config.txt fixups
 #    cmdline: point root= at the new btrfs partition by PARTUUID and add the
-#    btrfs root flags; drop the ext4/fsck/firstboot bits that don't apply.
+#    btrfs root flags; drop the ext4/fsck/resize bits that don't apply.
 #    config: auto_initramfs already handled in step 3.
 # =============================================================================
 fixup_bootconfig() {
@@ -605,15 +559,18 @@ fixup_bootconfig() {
 	#   - replace root=...            -> root=PARTUUID=<new p2>
 	#   - drop rootfstype=ext4        (we append rootfstype=btrfs)
 	#   - drop fsck.repair=...        (btrfs is not fsck'd at boot)
-	#   - drop init=/usr/lib/... entries. Two live in the vendor cmdline and both
-	#     must go, for DIFFERENT reasons:
-	#       raspberrypi-sys-mods/firstboot -- does NOT resize (verified against
-	#         20250930~bookworm: it regenerates SSH host keys, applies custom.toml,
-	#         and RANDOMISES the MBR disk identifier). That last part is why it
-	#         cannot run here: this image pins root=PARTUUID=c0dec0de-02.
-	#       raspi-config/init_resize.sh -- grows the partition, then hands off to
-	#         resize2fs. Replaced by grow-rootfs, which does it online for btrfs.
-	#   - drop init_resize / resize2fs bits for the same reason
+	#   - drop the bare `resize` token. It is the vendor's whole first-boot resize
+	#     switch, and it is read by two scripts that raspberrypi-sys-mods puts in
+	#     the initramfs WE regenerate, so they ship inside our image:
+	#       local-premount/resize_early -- parted resizepart 2 to fill the disk
+	#       local-bottom/set_partuuid   -- rewrites the MBR disk id from /dev/hwrng,
+	#                                      then seds the old id through /etc/fstab
+	#                                      and cmdline.txt
+	#     grow-rootfs already does the growing, idempotently and on every boot, so
+	#     carrying `resize` would mean two mechanisms racing for one job. Dropping
+	#     it also keeps the disk id -- and therefore the PARTUUIDs -- the same on
+	#     every card built from a given image, which is what makes a staged
+	#     re-flash addressable (coordinator#310).
 	#   - drop anything matching the role's CMDLINE_REMOVE globs
 	# then append the btrfs root flags, then the role's CMDLINE_APPEND tokens.
 	local out=() tok pat drop
@@ -640,9 +597,7 @@ fixup_bootconfig() {
 		root=*) out+=("root=PARTUUID=$root_partuuid") ;;
 		rootfstype=*) : ;; # replaced below
 		fsck.repair=*) : ;;
-		init=/usr/lib/raspberrypi-sys-mods/*) : ;; # see note above
-		init=/usr/lib/raspi-config/*) : ;;         # ditto
-		init_resize*) : ;;
+		resize) : ;; # see note above
 		*) out+=("$tok") ;;
 		esac
 	done
@@ -681,9 +636,9 @@ main() {
 	fetch_source
 	extract_source
 	apply_role_bootfs
-	link_firstrun_compat
 	install_grow_rootfs
 	write_manifest
+	install_sudoers
 	regenerate_initramfs
 	build_target
 	report

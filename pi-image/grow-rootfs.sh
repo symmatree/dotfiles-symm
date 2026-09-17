@@ -8,28 +8,32 @@
 # card being cloned onto a larger one.
 #
 # WHY THIS EXISTS. A flashed image is only as large as it was built (~3.6 GiB),
-# so the rest of the card is unpartitioned until something grows it. Raspberry Pi
-# OS does that in two stages and this image has neither:
+# so the rest of the card is unpartitioned until something grows it. Left
+# unreplaced that stranded both deployed units at ~3 GiB of a 32 GB card, with
+# the coordinator at 1 MiB unallocated -- btrfs near ENOSPC before anything was
+# installed, which is where it starts failing writes that `df` says should fit.
 #
-#   partition   init=/usr/lib/raspi-config/init_resize.sh -- our cmdline carries
-#               no init= at all, so it never runs.
-#   filesystem  resize2fs_once.service -- it is `resize2fs $(findmnt / -o source
-#               -n)`, which on btrfs yields subvolume notation (/dev/mmcblk0p2[/@])
-#               and is the wrong tool besides. Masked at build time.
+# Raspberry Pi OS has its own mechanism and this image deliberately does not use
+# it. The vendor's runs entirely from the initramfs, switched on by a bare
+# `resize` token in cmdline.txt: local-premount/resize_early grows the partition
+# with parted, local-bottom/set_partuuid rewrites the MBR disk identifier from
+# /dev/hwrng, and rpi-resize.service pulls in systemd-growfs-root to grow the
+# filesystem. build-image.sh strips that token, because a randomised disk id
+# makes PARTUUIDs differ per card -- and because two mechanisms racing to grow
+# one partition is worse than either alone.
 #
-# Left unreplaced that stranded both deployed units at ~3 GiB of a 32 GB card,
-# with the coordinator at 1 MiB unallocated -- btrfs near ENOSPC before anything
-# was installed, which is where it starts failing writes that `df` says should fit.
+# The trade taken here is that this runs on EVERY boot instead of only the first.
+# That costs a few reads and buys idempotence: a card cloned onto a larger one,
+# or one whose root was rewritten in place by a staged re-flash (coordinator#310),
+# is grown on the next boot with no cmdline surgery.
 #
-# No two-stage dance and no reboot: btrfs grows ONLINE. The vendor's split exists
-# only because resize2fs cannot grow a mounted ext4 root.
+# No two-stage dance and no reboot: btrfs grows ONLINE.
 set -euo pipefail
 
 log() { echo "grow-rootfs: $*"; }
 
 # findmnt --nofsroot is load-bearing: without it btrfs returns /dev/mmcblk0p2[/@]
-# and every downstream tool chokes on the subvolume suffix. That is the exact
-# defect that made resize2fs_once fail on every card.
+# and every downstream tool chokes on the subvolume suffix.
 part="$(findmnt -n -o SOURCE --nofsroot /)"
 [ -b "$part" ] || {
 	log "root source '$part' is not a block device; nothing to do"
