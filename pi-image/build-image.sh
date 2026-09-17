@@ -70,7 +70,18 @@ BOOTSTAGE="$BUILD/bootfs" # vendor /boot/firmware staged + fixed up here
 OUT_IMG="${2:-$BUILD/${ROLE}-pi-$(date +%Y%m%d).img}"
 
 # Partition geometry of the target image.
-BOOT_MB=512   # FAT32 /boot/firmware
+#
+# BOOT_MB is sized to stage a compressed image for a touchless re-flash
+# (coordinator#312), not for boot content -- boot content is 75.6 MiB across 435
+# files, measured on a built campod artifact. The rest is staging: the flasher
+# streams `unzip | dd` out of p1 onto p2, so p1 only has to hold the zip, and one
+# at a time. 1536 - 76 leaves ~1460 MiB against an 809 MiB artifact.
+#
+# THIS SIZE CANNOT BE CHANGED IN PLACE. p2 begins right after p1, so growing p1
+# means rewriting the whole card. Every device pays one full reflash to adopt it,
+# which is why it rides the same flash as a suite change rather than arriving on
+# its own.
+BOOT_MB=1536  # FAT32 /boot/firmware + staging for coordinator#312
 SLACK_MB=1536 # free space on top of the rootfs footprint
 
 require_root() {
