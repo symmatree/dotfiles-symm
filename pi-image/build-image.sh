@@ -94,7 +94,7 @@ require_root() {
 require_tools() {
 	local miss=0 t
 	for t in xz curl sha256sum losetup mount umount rsync parted \
-		mkfs.vfat mkfs.btrfs blkid sfdisk chroot unzip chattr lsattr; do
+		mkfs.vfat mkfs.btrfs blkid sfdisk chroot unzip chattr lsattr cpio; do
 		command -v "$t" >/dev/null 2>&1 || {
 			echo "missing tool: $t" >&2
 			miss=1
@@ -367,6 +367,132 @@ install_sudoers() {
 }
 
 # =============================================================================
+# 2f. flasher boot path
+#     Re-image p2 without pulling the card (coordinator#312). You cannot
+#     overwrite the filesystem you are running from, so something else has to be
+#     running: an initramfs whose /init never pivots to a real root. The whole
+#     system lives in RAM and nothing holds p2 open.
+#
+#     Selected by TRYBOOT. `reboot '0 tryboot'` boots tryboot.txt instead of
+#     config.txt EXACTLY ONCE; if the board does not come up, a power cycle falls
+#     back to config.txt. The rollback for the boot step is the firmware's.
+#
+#     THIS WRITES NOTHING. It boots, reports what it can see, and reboots. The
+#     unproven part is whether tryboot works on the Zero 2 W's bootcode.bin path
+#     -- the docs say every model, but nobody here has watched it. Wiring dd to a
+#     partition before that is settled would put the irreversible step first.
+#
+#     It reports against the staging contract so the bench side can be written
+#     against something real: p1 mounted rw, FLASH_DIR present, an image and its
+#     digest, free space, and the busybox applets the real flasher needs. The
+#     image is streamed `unzip | dd`, so p1 holds the zip and never the 4.8 GB
+#     raw form.
+# =============================================================================
+FLASH_DIR=flash # staged image lives at /boot/firmware/$FLASH_DIR/image.{zip,sha256}
+
+install_flasher_boot() {
+	echo "== build flasher initramfs + tryboot.txt =="
+
+	# busybox-static comes out of the chroot apt pass, which has already torn its
+	# binds down by now -- so this step is host-side: copy the binary, build the
+	# cpio, write the configs.
+	local fdir="$BUILD/flasher" bb=""
+	rm -rf "$fdir"
+	mkdir -p "$fdir"/{bin,proc,sys,dev,mnt}
+	for c in usr/bin/busybox bin/busybox; do
+		[ -x "$ROOTFS/$c" ] && bb="$ROOTFS/$c" && break
+	done
+	[ -n "$bb" ] || {
+		echo "!! busybox-static did not land in the rootfs" >&2
+		exit 1
+	}
+	cp "$bb" "$fdir/bin/busybox"
+
+	sed -e "s|@FLASH_DIR@|$FLASH_DIR|g" >"$fdir/init" <<-'INIT'
+		#!/bin/busybox sh
+		# PID 1 of a RAM-only system. Nothing here touches p2.
+		/bin/busybox --install -s /bin
+		mount -t proc none /proc
+		mount -t sysfs none /sys
+		mount -t devtmpfs none /dev 2>/dev/null
+
+		say() { echo ""; echo "=== $* ==="; }
+		echo ""
+		echo "#############################################################"
+		echo "##  FLASHER INITRAMFS -- tryboot reached RAM-only userspace ##"
+		echo "#############################################################"
+		say "kernel cmdline";  cat /proc/cmdline
+		say "memory";          head -3 /proc/meminfo
+		say "block devices";   cat /proc/partitions
+
+		say "is p2 mounted (it must NOT be)"
+		grep mmcblk /proc/mounts || echo "  nothing mounted -- correct"
+
+		say "p1: staging"
+		if mount -t vfat /dev/mmcblk0p1 /mnt 2>/dev/null; then
+		  echo "  mounted p1"
+		  df -h /mnt | tail -1
+		  if [ -d /mnt/@FLASH_DIR@ ]; then
+		    echo "  @FLASH_DIR@/ present:"
+		    ls -l /mnt/@FLASH_DIR@
+		    [ -f /mnt/@FLASH_DIR@/image.zip ] && echo "  image.zip present" || echo "  image.zip absent (expected on a fresh card)"
+		    [ -f /mnt/@FLASH_DIR@/image.sha256 ] && echo "  image.sha256 present" || echo "  image.sha256 absent"
+		  else
+		    echo "  @FLASH_DIR@/ absent (expected on a fresh card)"
+		  fi
+		  umount /mnt
+		else
+		  echo "  p1 NOT MOUNTABLE -- staging would not work"
+		fi
+
+		say "p2 readable without mounting"
+		dd if=/dev/mmcblk0p2 of=/dev/null bs=512 count=1 2>/dev/null     && echo "  readable" || echo "  NOT READABLE"
+
+		say "applets the real flasher needs"
+		for a in dd unzip sync mount umount reboot sha256sum df; do
+		  busybox --list | grep -qx "$a" && echo "  $a  present" || echo "  $a  MISSING"
+		done
+
+		say "verdict"
+		echo "  If you are reading this over serial, tryboot works on this board"
+		echo "  and an initramfs-only boot reaches the raw partitions."
+		echo ""
+		echo "  Rebooting in 30s into the NORMAL system. tryboot is one-shot;"
+		echo "  nothing was changed and nothing persists."
+		sleep 30
+		sync
+		reboot -f
+	INIT
+	chmod 0755 "$fdir/init"
+
+	(cd "$fdir" && find . | cpio -o -H newc --quiet | gzip -9) >"$BOOTSTAGE/initramfs-flash.gz"
+
+	# No root= at all: with an initramfs present and no root device named, the
+	# kernel runs /init from the cpio and never looks for a real root.
+	echo "console=serial0,115200 console=tty1 panic=30" >"$BOOTSTAGE/cmdline-flash.txt"
+
+	# tryboot.txt is a full config, not an overlay -- the firmware reads one or the
+	# other. Start from the real config so the board comes up the same way (UART,
+	# overlays, arm_boost), then point it at the flasher.
+	{
+		cat "$BOOTSTAGE/config.txt"
+		echo ""
+		echo "# --- flasher boot, reached only by: reboot '0 tryboot' ---"
+		echo "initramfs initramfs-flash.gz followkernel"
+		echo "cmdline=cmdline-flash.txt"
+		echo "auto_initramfs=0"
+	} >"$BOOTSTAGE/tryboot.txt"
+
+	# The staging directory ships empty, so the bench side has somewhere to put
+	# the image without having to create it on a read-only-ish boot partition.
+	mkdir -p "$BOOTSTAGE/$FLASH_DIR"
+
+	ls -l "$BOOTSTAGE/initramfs-flash.gz" "$BOOTSTAGE/tryboot.txt" "$BOOTSTAGE/cmdline-flash.txt"
+	echo "== tryboot.txt tail: =="
+	tail -n 5 "$BOOTSTAGE/tryboot.txt"
+}
+
+# =============================================================================
 # 3. regenerate the initramfs WITH btrfs, natively, via chroot
 #    THE CRUX. The stock kernel has btrfs as a *module*, so a btrfs root needs an
 #    initramfs that carries and modprobes btrfs before it can mount /. The vendor
@@ -418,7 +544,7 @@ regenerate_initramfs() {
 	chroot "$ROOTFS" /bin/bash -eu -c '
 		export DEBIAN_FRONTEND=noninteractive
 		apt-get update -qq
-		apt-get install -y -qq btrfs-progs
+		apt-get install -y -qq btrfs-progs busybox-static
 		update-initramfs -u -k all
 	'
 
@@ -619,6 +745,7 @@ main() {
 	write_manifest
 	install_sudoers
 	regenerate_initramfs
+	install_flasher_boot
 	build_target
 	report
 }
