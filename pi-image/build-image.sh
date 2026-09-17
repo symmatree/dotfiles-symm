@@ -377,16 +377,12 @@ install_sudoers() {
 #     config.txt EXACTLY ONCE; if the board does not come up, a power cycle falls
 #     back to config.txt. The rollback for the boot step is the firmware's.
 #
-#     THIS WRITES NOTHING. It boots, reports what it can see, and reboots. The
-#     unproven part is whether tryboot works on the Zero 2 W's bootcode.bin path
-#     -- the docs say every model, but nobody here has watched it. Wiring dd to a
-#     partition before that is settled would put the irreversible step first.
+#     IT DOES THE REAL WRITE -- see flasher-init.sh, which is its /init. The
+#     guards are on the inputs rather than on the action, and a fresh card with
+#     nothing staged is a report-and-reboot no-op.
 #
-#     It reports against the staging contract so the bench side can be written
-#     against something real: p1 mounted rw, FLASH_DIR present, an image and its
-#     digest, free space, and the busybox applets the real flasher needs. The
-#     image is streamed `unzip | dd`, so p1 holds the zip and never the 4.8 GB
-#     raw form.
+#     The image is streamed `unzip | dd`, so p1 holds the 809 MiB zip and never
+#     the 4.8 GB raw form, which is why BOOT_MB is sized the way it is.
 # =============================================================================
 FLASH_DIR=flash # staged image lives at /boot/firmware/$FLASH_DIR/image.{zip,sha256}
 
@@ -408,61 +404,7 @@ install_flasher_boot() {
 	}
 	cp "$bb" "$fdir/bin/busybox"
 
-	sed -e "s|@FLASH_DIR@|$FLASH_DIR|g" >"$fdir/init" <<-'INIT'
-		#!/bin/busybox sh
-		# PID 1 of a RAM-only system. Nothing here touches p2.
-		/bin/busybox --install -s /bin
-		mount -t proc none /proc
-		mount -t sysfs none /sys
-		mount -t devtmpfs none /dev 2>/dev/null
-
-		say() { echo ""; echo "=== $* ==="; }
-		echo ""
-		echo "#############################################################"
-		echo "##  FLASHER INITRAMFS -- tryboot reached RAM-only userspace ##"
-		echo "#############################################################"
-		say "kernel cmdline";  cat /proc/cmdline
-		say "memory";          head -3 /proc/meminfo
-		say "block devices";   cat /proc/partitions
-
-		say "is p2 mounted (it must NOT be)"
-		grep mmcblk /proc/mounts || echo "  nothing mounted -- correct"
-
-		say "p1: staging"
-		if mount -t vfat /dev/mmcblk0p1 /mnt 2>/dev/null; then
-		  echo "  mounted p1"
-		  df -h /mnt | tail -1
-		  if [ -d /mnt/@FLASH_DIR@ ]; then
-		    echo "  @FLASH_DIR@/ present:"
-		    ls -l /mnt/@FLASH_DIR@
-		    [ -f /mnt/@FLASH_DIR@/image.zip ] && echo "  image.zip present" || echo "  image.zip absent (expected on a fresh card)"
-		    [ -f /mnt/@FLASH_DIR@/image.sha256 ] && echo "  image.sha256 present" || echo "  image.sha256 absent"
-		  else
-		    echo "  @FLASH_DIR@/ absent (expected on a fresh card)"
-		  fi
-		  umount /mnt
-		else
-		  echo "  p1 NOT MOUNTABLE -- staging would not work"
-		fi
-
-		say "p2 readable without mounting"
-		dd if=/dev/mmcblk0p2 of=/dev/null bs=512 count=1 2>/dev/null     && echo "  readable" || echo "  NOT READABLE"
-
-		say "applets the real flasher needs"
-		for a in dd unzip sync mount umount reboot sha256sum df; do
-		  busybox --list | grep -qx "$a" && echo "  $a  present" || echo "  $a  MISSING"
-		done
-
-		say "verdict"
-		echo "  If you are reading this over serial, tryboot works on this board"
-		echo "  and an initramfs-only boot reaches the raw partitions."
-		echo ""
-		echo "  Rebooting in 30s into the NORMAL system. tryboot is one-shot;"
-		echo "  nothing was changed and nothing persists."
-		sleep 30
-		sync
-		reboot -f
-	INIT
+	sed -e "s|@FLASH_DIR@|$FLASH_DIR|g" "$HERE/flasher-init.sh" >"$fdir/init"
 	chmod 0755 "$fdir/init"
 
 	(cd "$fdir" && find . | cpio -o -H newc --quiet | gzip -9) >"$BOOTSTAGE/initramfs-flash.gz"
