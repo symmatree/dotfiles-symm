@@ -474,6 +474,67 @@ regenerate_initramfs() {
 		export DEBIAN_FRONTEND=noninteractive
 		apt-get update -qq
 		apt-get install -y -qq btrfs-progs
+
+		# PURGE, not disable. A masked unit still has its binary and libraries on
+		# disk, and a failed start still maps them, faults them in, and leaves those
+		# pages on the LRU competing with everything else. On a 417 MiB box whose
+		# measured failure mode is page-cache thrash -- workingset_refault_file at
+		# ~6000 pages/s during the camera import -- pages that are never loaded are
+		# worth more than seconds of boot time. Gone also cannot have side effects
+		# and takes its dependency surface with it.
+		#
+		# Everything here was checked as present in the pinned base image and as
+		# having no consumer on this fleet:
+		#   modemmanager      no cellular modem, and it PROBES tty devices on
+		#                     appearance -- a hazard on a campod whose UART is the
+		#                     debug console and worse on a coordinator whose UART is
+		#                     the FC link
+		#   avahi-daemon      mDNS; the fleet resolves through real DNS
+		#   libnss-mdns       the nsswitch half of the same thing
+		#   triggerhappy      hotkey daemon for physical keyboards
+		#   bluez pi-bluetooth bluez-firmware
+		#                     dtoverlay=disable-bt means the bluetooth/btbcm/hci_uart
+		#                     modules are not even loaded (verified via lsmod)
+		#   alsa-utils        no audio is used
+		#   udisks2           removable-media automounting
+		#   pigpio pigpiod    the accel reader talks to spidev directly
+		#   nfs-common rpcbind  nothing mounts NFS
+		#   console-setup keyboard-configuration  headless
+		#   cron              its timers are masked (coordinator#282); the daemon is
+		#                     a separate thing and has no jobs here
+		#   man-db            man pages on an appliance
+		#
+		# NOT purged, deliberately:
+		#   e2fsprogs   Debian Priority: required. The e2scrub units are masked
+		#               elsewhere instead.
+		#   apparmor    Docker ships AppArmor profiles and confines containers with
+		#               them. Removing it changes confinement, which is not a
+		#               startup-footprint question.
+		#   polkitd     NetworkManager depends on it.
+		#   dphys-swapfile  masked, not purged, on purpose: the unit is what makes
+		#               swap the silent default, but the BINARY is a deliberate hatch
+		#               (dphys-swapfile setup/swapon) for the case where an in-place
+		#               apt genuinely needs headroom.
+		#   rpi-eeprom  role-specific. The Zero 2 W has no EEPROM, but the
+		#               coordinator (Pi 4B) and pocketterm (Pi 5) do, and this is how
+		#               their bootloaders get updated. Fleet-wide purge would remove
+		#               that.
+		#
+		# Not -qq: the log should show what actually came out, not that we tried.
+		apt-get purge -y \
+			modemmanager \
+			avahi-daemon libnss-mdns \
+			triggerhappy \
+			bluez pi-bluetooth bluez-firmware \
+			alsa-utils \
+			udisks2 \
+			pigpio pigpiod \
+			nfs-common rpcbind \
+			console-setup console-setup-linux keyboard-configuration \
+			cron \
+			man-db
+		apt-get autoremove --purge -y
+
 		systemctl mask resize2fs_once.service
 		systemctl mask dphys-swapfile.service
 		update-initramfs -c -k all
@@ -498,6 +559,21 @@ regenerate_initramfs() {
 		"$ROOTFS/etc/systemd/system/dphys-swapfile.service"
 	echo "== fstab swap entries (expect none): =="
 	grep -c swap "$ROOTFS/etc/fstab" || true
+
+	# Prove the purge rather than trust it: these are the things whose absence is
+	# the point. A leftover here means apt kept something we assumed was gone.
+	echo "== purge check: binaries and units that should NOT exist =="
+	local leftover=0 f
+	for f in usr/sbin/ModemManager usr/sbin/avahi-daemon usr/sbin/thd \
+		usr/bin/bluetoothctl usr/bin/pigpiod usr/sbin/rpcbind usr/bin/man \
+		usr/sbin/cron usr/lib/systemd/system/udisks2.service; do
+		if [ -e "$ROOTFS/$f" ]; then
+			echo "   STILL PRESENT: /$f"
+			leftover=1
+		fi
+	done
+	[ "$leftover" -eq 0 ] && echo "   none present -- purge clean"
+	echo "== packages remaining: $(chroot "$ROOTFS" dpkg-query -f '.\n' -W 2>/dev/null | wc -l) =="
 
 	# Confirm an initramfs was actually produced (glob, not ls|grep).
 	echo "== initramfs artifacts now in bootfs: =="
