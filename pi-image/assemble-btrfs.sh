@@ -158,21 +158,17 @@ echo "== write /etc/fstab (UUID=$UUID, boot=$BOOTFS_SPEC) =="
 	# btrfs is self-consistent (CoW) and is not fsck'd at boot, so the pass field is 0
 	# on every btrfs line (the ext4-style 1/2 passes don't apply).
 	#
-	# compress=zstd is on EVERY line, including @usr, @scratch and @snapshots where
-	# it looks redundant. It is not: compress is a per-SUPERBLOCK btrfs option, so a
-	# mount that omits it does not inherit -- it sets the whole filesystem to "use
-	# no compression". Whichever subvolume mounts last therefore decides, and mount
-	# order is not fixed across devices. Leaving it off three lines produced exactly
-	# that: two units from the same build, one compressing and one not.
-	# On @scratch it changes nothing in practice (nodatacow files are never
-	# compressed) and keeps the superblock consistent.
-	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/" "btrfs" "noatime,compress=zstd,subvol=@"
-	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/usr" "btrfs" "noatime,ro,compress=zstd,subvol=@usr"
-	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/var" "btrfs" "noatime,compress=zstd,subvol=@var"
-	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/home" "btrfs" "noatime,compress=zstd,subvol=@home"
-	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "$DATA_MOUNT" "btrfs" "noatime,compress=zstd,subvol=@data"
-	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/scratch" "btrfs" "noatime,nodatacow,compress=zstd,subvol=@scratch"
-	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/.snapshots" "btrfs" "noatime,compress=zstd,subvol=@snapshots"
+	# No compression -- no proven reason to turn it on. If it ever comes back it goes
+	# on every line: btrfs mount options are per-filesystem, only the first mounted
+	# subvolume's take effect (btrfs(5)), and a mixed set gave two units from one
+	# build behaving differently.
+	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/" "btrfs" "noatime,subvol=@"
+	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/usr" "btrfs" "noatime,ro,subvol=@usr"
+	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/var" "btrfs" "noatime,subvol=@var"
+	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/home" "btrfs" "noatime,subvol=@home"
+	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "$DATA_MOUNT" "btrfs" "noatime,subvol=@data"
+	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/scratch" "btrfs" "noatime,nodatacow,subvol=@scratch"
+	printf 'UUID=%s  %-22s  %-5s  %s  0 0\n' "$UUID" "/.snapshots" "btrfs" "noatime,subvol=@snapshots"
 	# FAT firmware partition -- fstab line only for the spike (no FAT part here).
 	# Real image keys this by PARTUUID (BOOTFS_SPEC) so no stray 'bootfs' card mounts here.
 	#
