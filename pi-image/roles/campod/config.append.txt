@@ -59,3 +59,17 @@ dtoverlay=dwc2,dr_mode=peripheral
 # Inert when nothing is on the bus, so a campod without a sensor pays nothing --
 # which is why this can be fleet-wide rather than a per-unit knob.
 dtparam=spi=on
+
+# CMA, set explicitly because removing vc4-kms-v3d removes the thing that was
+# setting it. The camera still needs contiguous buffers -- libcamera allocates
+# through dma_heap, whose CMA heap comes from this reservation -- so this is a
+# reduction, not a removal.
+#
+# 128MB is the largest value the overlay README does not mark as "needs 1GB", so
+# it is the vendor's own ceiling for a 512MB board. It returns ~128MB to general
+# use from the 256MB the graphics overlay was reserving.
+#
+# UNVERIFIED: the camera's actual contiguous requirement has not been measured.
+# The check after flashing is that capture works and CmaTotal reads 131072 kB.
+# If capture fails to allocate, this is the number to raise.
+dtoverlay=cma,cma-128

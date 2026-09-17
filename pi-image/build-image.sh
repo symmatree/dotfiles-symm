@@ -222,6 +222,56 @@ extract_source() {
 #     Runs on the staged $BOOTSTAGE before the initramfs regen reads config.txt.
 # =============================================================================
 apply_role_bootfs() {
+	# CONFIG_REMOVE: comment out vendor config.txt directives this role does not
+	# want. Appending cannot undo them -- there is no "dtoverlay=none", and a second
+	# dtoverlay line loads a second overlay rather than replacing the first. Only
+	# dtparam has last-wins semantics, and not reliably across sections.
+	#
+	# Commented rather than deleted so the card still shows what the vendor shipped
+	# and that its absence was a decision.
+	if [ -n "${CONFIG_REMOVE:-}" ]; then
+		echo "== disable role-removed config.txt directives ($ROLE) =="
+		local cfg="$BOOTSTAGE/config.txt" tmp="$BUILD/config.txt.filtered"
+		local line pat hit matched=""
+		: >"$tmp"
+		while IFS= read -r line || [ -n "$line" ]; do
+			hit=0
+			case "$line" in
+			\#* | '') ;;
+			*)
+				for pat in $CONFIG_REMOVE; do
+					# shellcheck disable=SC2254  # glob match is the point
+					case "$line" in
+					$pat)
+						hit=1
+						matched="$matched $pat"
+						break
+						;;
+					esac
+				done
+				;;
+			esac
+			if [ "$hit" -eq 1 ]; then
+				printf '# disabled by build-image.sh (%s): %s\n' "$ROLE" "$line" >>"$tmp"
+				echo "   disabled: $line"
+			else
+				printf '%s\n' "$line" >>"$tmp"
+			fi
+		done <"$cfg"
+		mv "$tmp" "$cfg"
+
+		# A pattern that matched nothing is a typo or a vendor change, and would
+		# otherwise be invisible -- the directive stays enabled and the build says
+		# nothing. Warn rather than fail: a role may legitimately list a directive
+		# that only some base images carry.
+		for pat in $CONFIG_REMOVE; do
+			case "$matched" in
+			*"$pat"*) ;;
+			*) echo "   !! CONFIG_REMOVE pattern matched nothing: $pat" ;;
+			esac
+		done
+	fi
+
 	if [ -n "${CONFIG_APPEND:-}" ]; then
 		local ca="$HERE/$CONFIG_APPEND"
 		[ -f "$ca" ] || {
