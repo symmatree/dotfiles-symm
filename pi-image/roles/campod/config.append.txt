@@ -54,10 +54,14 @@ dtoverlay=dwc2,dr_mode=peripheral
 # Inert with nothing on the bus, so a campod without a sensor pays nothing.
 dtparam=spi=on
 
-# CMA, set here because removing vc4-kms-v3d removes what was setting it. The
-# camera still needs contiguous buffers -- libcamera allocates through dma_heap,
-# whose CMA heap comes from this reservation -- so this is a reduction, not a
-# removal.
+# CMA. This line is REQUIRED by the vc4-kms-v3d removal in campod.env, not
+# merely paired with it: that overlay is what device tree uses to set CMA, and
+# the kernel's own default is CONFIG_CMA_SIZE_MBYTES=5. Remove the overlay
+# without this and CMA is 5MB, under the camera's ~48 MiB, and capture stops.
+#
+# The overlays README warns that this overlay "might clash with other overlays
+# like vc4-fkms-v3d and vc4-kms-v3d" -- which is precisely why it only appears
+# on a role that removes vc4-kms-v3d.
 #
 # 128MB against a measured requirement of ~48 MiB. capture.py runs
 # create_still_configuration at sensor resolution with CAMPOD_CAPTURE_WIDTH and
