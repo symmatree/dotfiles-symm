@@ -53,3 +53,24 @@ dtoverlay=dwc2,dr_mode=peripheral
 #
 # Inert with nothing on the bus, so a campod without a sensor pays nothing.
 dtparam=spi=on
+
+# CMA, set here because removing vc4-kms-v3d removes what was setting it. The
+# camera still needs contiguous buffers -- libcamera allocates through dma_heap,
+# whose CMA heap comes from this reservation -- so this is a reduction, not a
+# removal.
+#
+# 128MB against a measured requirement of ~48 MiB. capture.py runs
+# create_still_configuration at sensor resolution with CAMPOD_CAPTURE_WIDTH and
+# HEIGHT unset, which in picamera2 means buffer_count=1, a BGR888 main stream and
+# a raw stream at the same size. For the IMX708 at 4608x2592 that is 34.2 MiB of
+# main plus 14.2 MiB of raw, plus small ISP statistics buffers.
+#
+# The number is tied to that configuration, not to the camera: a video
+# configuration defaults to six buffers, which at this resolution would want
+# ~290 MiB and fits in none of these values. If CAMPOD_CAPTURE_WIDTH/HEIGHT or
+# the configuration type changes, redo the arithmetic.
+#
+# A too-small reservation fails inside libcamera's buffer allocation, which
+# presents as a camera that will not start rather than as an out-of-memory
+# message. The check is that capture works at full sensor resolution.
+dtoverlay=cma,cma-128

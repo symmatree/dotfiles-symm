@@ -197,6 +197,56 @@ extract_source() {
 #     Runs on the staged $BOOTSTAGE before the initramfs regen reads config.txt.
 # =============================================================================
 apply_role_bootfs() {
+	# CONFIG_REMOVE: comment out vendor config.txt directives this role does not
+	# want. Appending cannot undo them -- there is no "dtoverlay=none", and a
+	# second dtoverlay line loads a second overlay rather than replacing the
+	# first. Only dtparam has last-wins semantics, and not reliably across
+	# sections. Runs before CONFIG_APPEND so it only ever sees vendor lines.
+	#
+	# Commented rather than deleted, so a card still shows what the vendor
+	# shipped and that its absence was chosen.
+	if [ -n "${CONFIG_REMOVE:-}" ]; then
+		echo "== disable role-removed config.txt directives ($ROLE) =="
+		local cfg="$BOOTSTAGE/config.txt" tmp="$BUILD/config.txt.filtered"
+		local line pat hit matched=""
+		: >"$tmp"
+		while IFS= read -r line || [ -n "$line" ]; do
+			hit=0
+			case "$line" in
+			\#* | '') ;;
+			*)
+				for pat in $CONFIG_REMOVE; do
+					# shellcheck disable=SC2254  # glob match is the point
+					case "$line" in
+					$pat)
+						hit=1
+						matched="$matched $pat"
+						break
+						;;
+					esac
+				done
+				;;
+			esac
+			if [ "$hit" -eq 1 ]; then
+				printf '# disabled by build-image.sh (%s): %s\n' "$ROLE" "$line" >>"$tmp"
+				echo "   disabled: $line"
+			else
+				printf '%s\n' "$line" >>"$tmp"
+			fi
+		done <"$cfg"
+		mv "$tmp" "$cfg"
+
+		# A pattern that matches nothing is a typo or a vendor change, and the
+		# directive stays enabled with nothing said. Warn rather than fail: a role
+		# may list a directive only some base images carry.
+		for pat in $CONFIG_REMOVE; do
+			case "$matched" in
+			*"$pat"*) ;;
+			*) echo "   !! CONFIG_REMOVE pattern matched nothing: $pat" ;;
+			esac
+		done
+	fi
+
 	if [ -n "${CONFIG_APPEND:-}" ]; then
 		local ca="$HERE/$CONFIG_APPEND"
 		[ -f "$ca" ] || {
@@ -483,12 +533,69 @@ regenerate_initramfs() {
 	# /boot/initrd.img-<kver> for both kernels, and -c declines to overwrite an
 	# existing one -- which would ship the vendor's btrfs-less initramfs, and a
 	# card that cannot find its root, with the build reporting success.
+	# PURGE, not mask. A masked unit still has its binary and libraries on disk,
+	# and a failed start still maps them, faults them in, and leaves those pages
+	# on the LRU. On a 417 MiB box whose measured failure mode is page-cache
+	# thrash, pages that are never loaded are worth more than boot seconds.
+	#
+	# Everything here was checked as present in this base and as having no
+	# consumer on this fleet:
+	#   avahi-daemon libnss-mdns  mDNS. The fleet resolves through real DNS
+	#                             (local.symmatree.com); mDNS does not work
+	#                             reliably across broadcast domains, which this
+	#                             fleet spans.
+	#   bluez bluez-firmware      dtoverlay=disable-bt means bluetooth/btbcm/
+	#                             hci_uart are never loaded
+	#   alsa-utils                no audio
+	#   udisks2                   removable-media automounting
+	#   man-db                    man pages on an appliance
+	#   cron                      its timers are masked (coordinator#282); the
+	#                             daemon is separate and has no jobs here
+	#
+	# NOT purged, and why:
+	#   console-setup keyboard-configuration  cloud-init's keyboard module drives
+	#                             these, and user-data sets a keymap. Removing
+	#                             them means removing that too; a separate change.
+	#   e2fsprogs                 Debian Priority: required. Its scrub units are
+	#                             masked below instead.
+	#   apparmor                  Docker confines containers with it
+	#   polkitd                   NetworkManager depends on it
+	#   rpi-eeprom                the Zero 2 W has no EEPROM, but the coordinator
+	#                             and pocketterm do and this updates their
+	#                             bootloaders -- a fleet-wide purge removes that
+	#
+	# e2scrub_reap is masked rather than purged: it is ext4 scrubbing, enabled in
+	# the base, on a filesystem that is btrfs.
+	#
+	# Not -qq: the log should show what came out.
 	chroot "$ROOTFS" /bin/bash -eu -c '
 		export DEBIAN_FRONTEND=noninteractive
 		apt-get update -qq
 		apt-get install -y -qq btrfs-progs busybox-static
+		apt-get purge -y \
+			avahi-daemon libnss-mdns \
+			bluez bluez-firmware \
+			alsa-utils \
+			udisks2 \
+			man-db \
+			cron
+		apt-get autoremove --purge -y
+		systemctl mask e2scrub_reap.service
 		update-initramfs -u -k all
 	'
+
+	# Prove the purge. A leftover means apt kept something assumed gone.
+	echo "== purge check: these must not exist =="
+	local leftover=0 f
+	for f in usr/sbin/avahi-daemon usr/bin/bluetoothctl usr/bin/man usr/sbin/cron \
+		usr/lib/systemd/system/udisks2.service; do
+		if [ -e "$ROOTFS/$f" ]; then
+			echo "   STILL PRESENT: /$f"
+			leftover=1
+		fi
+	done
+	[ "$leftover" -eq 0 ] && echo "   none present -- purge clean"
+	echo "== packages remaining: $(chroot "$ROOTFS" dpkg-query -f '.\n' -W 2>/dev/null | wc -l) =="
 
 	# An initramfs FILE in bootfs proves nothing -- the base ships two. Check for
 	# the module itself.
