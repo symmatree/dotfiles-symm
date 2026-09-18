@@ -7,7 +7,7 @@ btrfs support, no WSL, and no block-device passthrough (coordinator#96).
 
 | file | what |
 |------|------|
-| `firstrun.sh.template` | the script rpi-imager drops on the FAT partition; placeholders `__LIKE_THIS__` |
+| `user-data.template` | the cloud-config rpi-imager drops on the FAT partition; placeholders `__LIKE_THIS__` |
 | `fleet.env.example` | fleet-constant values. Copy to `fleet.env` (gitignored) and fill in. **Secrets.** |
 | `Flash-Card.ps1` | Windows: render + flash one card |
 
@@ -72,33 +72,71 @@ powershell -ExecutionPolicy Bypass -File .\Flash-Card.ps1 -Hostname campod-sw -D
 
 The image does not need to sit next to the script -- leave it where the browser put it.
 
-`rpi-imager`'s CLI hardcodes `init_format = systemd` for any local file
-(`src/cli.cpp`), so `--first-run-script` reaches the same code path the GUI wizard uses,
-with no custom-repository JSON. The GUI cannot do this: it offers no customization for a
+`rpi-imager`'s CLI picks the customisation path from which flags are present
+(`src/cli.cpp`): `initFormat = (cloudinit-userdata empty && cloudinit-networkconfig empty)
+? "systemd" : "cloudinit"`, so `--cloudinit-userdata` selects cloud-init for a locally
+selected image with no custom-repository JSON. The GUI cannot do this: it offers no customization for a
 locally-selected image (`src/wizard/OSSelectionStep.qml`: *"For custom images,
 customization is not supported"*).
 
-## Why the template is not a verbatim Imager script
+## How it works, and the two things it deliberately does not do
 
-It was harvested from a real Imager wizard run (a *Raspberry Pi OS (Legacy, 64-bit) Lite*
-flash -- the Legacy entries are Bookworm and declare `init_format: systemd`; the current
-non-Legacy entries are Trixie and declare `cloudinit-rpi`, which this image cannot
-consume). The vendor's `else` fallback branches were then removed. They fire only when
-`/usr/lib/raspberrypi-sys-mods/imager_custom` is absent, which on this image it never is
--- and the WiFi fallback is not merely dead but **wrong for Bookworm**: it writes
-`/etc/wpa_supplicant/wpa_supplicant.conf`, which NetworkManager (the Bookworm network
-stack) does not read. Keeping it would have doubled the number of places the WiFi PSK
-appears for no reachable benefit.
+The image ships cloud-init with a NoCloud datasource pointed at the boot partition
+(`/etc/cloud/cloud.cfg.d/99_raspberry-pi.cfg`: `seedfrom: file:///boot/firmware`), and
+`cloud-init-main.service` carries `RequiresMountsFor=/boot/firmware`, so it is ordered
+after the PARTUUID-keyed mount. Dropping `user-data` on the FAT partition is the whole
+mechanism -- no script, no initramfs fixup, no `cmdline.txt` surgery.
+
+`meta-data` is required for NoCloud to recognise the seed, but there is no template for it
+here: rpi-imager writes its own, with an instance-id unique per imaging, and adds
+`ds=nocloud;i=<id>` to `cmdline.txt` so the datasource cache survives a reboot.
+
+**No `network-config`.** WiFi is a NetworkManager keyfile written by `write_files`.
+cloud-init renders `network-config` through netplan, and that path has a live defect --
+`/etc/cloud/cloud.cfg` lists `netplan_nm_patch` in `cloud_final_modules` while
+`cc_netplan_nm_patch.py` is not in the package, removed in `25.2-1~bpo13+1+rpt19` with the
+reference left behind. That pairing produced the 0-byte `/etc/netplan/90-NM-*.yaml` and the
+unrecoverable WiFi in `coordinator/docs/coordinator-network.md`. A keyfile is what `nmtui`
+writes when a human fixes one of these by hand, and it never enters netplan.
+
+Because that reference is still dangling, cloud-init reports `degraded` on every boot on
+every card. **`cloud-init status` is therefore not a health check here** -- reachability is.
+
+**No `rpi:` key.** `cc_raspberry_pi` would turn `rpi: {interfaces: {spi: true}}` into
+`raspi-config nonint do_spi 0`, which edits `/boot/firmware/config.txt` on the running
+device and reboots. Device-tree config comes from the image so routine operation never
+writes the FAT partition.
 
 ## Known difference from a GUI flash
 
 The GUI also appends `cfg80211.ieee80211_regdom=<CC>` to `cmdline.txt`; the CLI path does
-not (`imagewriter.cpp` sets it from wizard settings only). Assessed as no practical
-impact: `imager_custom set_wlan` is passed the country and calls
-`raspi-config nonint do_wifi_country`, which sets the regulatory domain persistently, and
-the radio is not used until the post-`firstrun.sh` reboot -- by which point it is set.
-The Zero 2 W is 2.4 GHz only, so the channels the default regdom would restrict are not
-in play either. **Not tested on hardware.**
+not (`imagewriter.cpp` sets it from wizard settings only). `user-data`'s `runcmd` calls
+`raspi-config nonint do_wifi_country` instead, which sets the regulatory domain
+persistently. The Zero 2 W is 2.4 GHz only, so the channels the default regdom would
+restrict are not in play either. **Not tested on hardware.**
+
+## Check the template without a card
+
+A malformed `user-data` is not rejected -- cloud-init skips it -- so the card comes up with
+no user and no WiFi and nothing says why. Render it with dummy values and parse it:
+
+```bash
+python3 - <<'EOF'
+import yaml, re
+s = open('pi-image/provision/user-data.template').read()
+for k, v in {'HOSTNAME':'x','TIMEZONE':'UTC','KEYMAP':'us','USERNAME':'pi','PW_HASH':'$y$x$y',
+             'SSH_PUBKEY':'ssh-ed25519 AAAA x','WIFI_SSID':'s','WIFI_PSK':'p','WIFI_COUNTRY':'US'}.items():
+    s = s.replace(f'__{k}__', v)
+assert not re.findall(r'__[A-Z_]+__', s), 'unsubstituted placeholder'
+d = yaml.safe_load(s)
+assert 'network' not in d and 'rpi' not in d
+print('ok:', sorted(d))
+EOF
+```
+
+Placeholders left over are the interesting failure: `Flash-Card.ps1` treats any
+`__NAME__` as a missing `fleet.env` key and refuses to flash, so a placeholder-shaped
+string anywhere in the template -- including in a comment -- breaks the render.
 
 ## Handling of secrets
 
@@ -107,8 +145,5 @@ SSH key is a **public** key, the hostname is not secret, and with key-only auth 
 password hash protects an account that has no reachable password login. Nothing here is
 baked into the image, so the image itself stays publishable.
 
-A rendered `firstrun.sh` **does** contain the PSK and the password hash. `Flash-Card.ps1`
-writes it to a temp file and deletes it in a `finally` block. If you harvest a fresh one
-from the Imager GUI, note that an unmodified Imager script contains the PSK **twice** --
-once in the `imager_custom set_wlan` call and again in the `wpa_supplicant.conf` heredoc
-in the fallback branch.
+A rendered `user-data` **does** contain the PSK and the password hash, each exactly once.
+`Flash-Card.ps1` writes it to a temp file and deletes it in a `finally` block.

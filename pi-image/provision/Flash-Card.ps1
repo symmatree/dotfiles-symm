@@ -3,10 +3,11 @@
     Flash one fleet SD card and inject its per-unit identity, on Windows.
 
 .DESCRIPTION
-    Renders firstrun.sh.template with values from fleet.env plus the -Hostname
+    Renders user-data.template with values from fleet.env plus the -Hostname
     argument, then hands it to rpi-imager's CLI, which writes the image, copies
-    firstrun.sh onto the FAT partition, and appends the systemd.run= tokens to
-    cmdline.txt. No WSL, no block-device passthrough, no secrets in the image.
+    user-data onto the FAT partition alongside a generated meta-data, and adds
+    the ds=nocloud tokens to cmdline.txt. cloud-init in the image does the rest
+    on first boot. No WSL, no block-device passthrough, no secrets in the image.
 
     Run from an elevated PowerShell (rpi-imager needs Administrator to write a
     raw device).
@@ -65,7 +66,7 @@ if (-not $here) { $here = if ($PSCommandPath) { Split-Path -Parent $PSCommandPat
 if (-not $here) { $here = (Get-Location).Path }
 
 if (-not $SecretsFile) { $SecretsFile = Join-Path $here 'fleet.env' }
-$TemplateFile = Join-Path $here 'firstrun.sh.template'
+$TemplateFile = Join-Path $here 'user-data.template'
 
 # Find rpi-imager rather than assuming an install path. Hardcoding
 # "$env:ProgramFiles\Raspberry Pi Imager" was a guess and it was wrong on a real
@@ -123,15 +124,18 @@ if ($missing) {
     throw "these are blank or absent in ${SecretsFile}: $($missing -join ', ')"
 }
 
-# Single quotes in the template are the shell's; a value containing one would
-# break out of its argument. None of these values legitimately contain one.
+# The rendered file is YAML. A value carrying a double quote, a backslash or a
+# newline would break out of the scalar it is substituted into -- the PSK and the
+# password hash are the realistic candidates, and a malformed user-data is not
+# rejected, it is silently skipped, leaving a card with no user and no WiFi.
 foreach ($k in $vals.Keys) {
-    if ($vals[$k] -match "'") { throw "value for $k contains a single quote, which would break the generated shell script" }
+    if ($vals[$k] -match '["\\`r`n]') { throw "value for $k contains a quote, backslash or newline, which would break the generated YAML" }
 }
 
-# MUST be LF. This is a shell script the Pi runs; PowerShell's default CRLF
-# would leave "#!/bin/sh`r" and the script would not execute.
-$rendered = Join-Path ([System.IO.Path]::GetTempPath()) "firstrun-$Hostname.sh"
+# MUST be LF. cloud-init parses this on the Pi; PowerShell's default CRLF
+# survives YAML but lands inside the NetworkManager keyfile written by
+# write_files, and NM rejects a profile with trailing carriage returns.
+$rendered = Join-Path ([System.IO.Path]::GetTempPath()) "user-data-$Hostname.yaml"
 [System.IO.File]::WriteAllText($rendered, ($template -replace "`r`n", "`n"), (New-Object System.Text.UTF8Encoding($false)))
 
 # --- identify and confirm the target disk -------------------------------------
@@ -168,9 +172,19 @@ Write-Host "flashing $Image -> $Disk ..." -ForegroundColor Yellow
 #
 # -ArgumentList elements are not auto-quoted on Windows PowerShell 5.1, so quote
 # the paths here; any of them can contain spaces.
+# --cloudinit-userdata, not --first-run-script: src/cli.cpp sets
+# initFormat = (cloudinit-userdata empty && cloudinit-networkconfig empty)
+#              ? "systemd" : "cloudinit"
+# so passing this one flag switches the whole customisation path. Imager then
+# writes user-data plus its own meta-data, and adds ds=nocloud;i=<id> to
+# cmdline.txt.
+#
+# --cloudinit-networkconfig is deliberately NOT passed: network-config renders
+# through netplan, and that path is what lost WiFi in July. The keyfile in
+# user-data's write_files bypasses it.
 $argList = @(
     '--cli'
-    '--first-run-script'
+    '--cloudinit-userdata'
     "`"$rendered`""
     "`"$Image`""
     "`"$Disk`""
