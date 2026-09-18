@@ -518,8 +518,8 @@ regenerate_initramfs() {
 	#     avahi-daemon  mDNS. The fleet resolves through real DNS
 	#                   (local.symmatree.com); mDNS is unreliable across the
 	#                   broadcast domains this fleet spans.
-	#     cron          its timers are masked (coordinator#282), but the daemon is
-	#                   a separate thing and has no jobs here.
+	#     cron          no jobs here. Note this does NOT cover the systemd timers --
+	#                   those are masked separately below.
 	#     udisks2       removable-media automounting.
 	#   ENABLED, starts and finds nothing:
 	#     bluez         dtoverlay=disable-bt means there is no adapter to attach to.
@@ -534,7 +534,7 @@ regenerate_initramfs() {
 	#   console-setup, keyboard-configuration  these DO start at boot and would
 	#           otherwise qualify, but cloud-init's keyboard module drives them and
 	#           user-data sets a keymap. Removing them means removing that too.
-	#   e2fsprogs  Priority: required. Both its timers are masked below instead --
+	#   e2fsprogs  Priority: required. Its scrub units are masked below instead --
 	#           ext4 scrubbing on a btrfs root.
 	#   apparmor   Docker confines containers with it.
 	#   polkitd    NetworkManager depends on it, and it is running.
@@ -555,7 +555,21 @@ regenerate_initramfs() {
 			man-db \
 			cron
 		apt-get autoremove --purge -y
-		systemctl mask e2scrub_reap.service e2scrub_all.timer
+		# Nothing runs on a schedule. coordinator#282 masks these on a converged
+		# device; doing it here as well closes the window between flash and first
+		# converge, on a card whose timers would otherwise fire with Persistent=true
+		# and catch up every missed window at once. Same list as that role, so the
+		# two cannot drift -- add there and here together. Masking a unit whose
+		# package is absent is legal and keeps the decision made.
+		#
+		# systemd-tmpfiles-clean.timer is deliberately NOT masked: it is the only
+		# thing enforcing /tmp cleanup, and /tmp is a tmpfs here.
+		systemctl mask \
+			apt-daily.timer apt-daily-upgrade.timer \
+			man-db.timer dpkg-db-backup.timer logrotate.timer \
+			e2scrub_all.timer fstrim.timer
+		# Not a timer, so not in that list: ext4 scrubbing on a btrfs root.
+		systemctl mask e2scrub_reap.service
 		update-initramfs -u -k all
 	'
 
