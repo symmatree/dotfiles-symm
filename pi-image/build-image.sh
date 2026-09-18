@@ -197,54 +197,17 @@ extract_source() {
 #     Runs on the staged $BOOTSTAGE before the initramfs regen reads config.txt.
 # =============================================================================
 apply_role_bootfs() {
-	# CONFIG_REMOVE: comment out vendor config.txt directives this role does not
-	# want. Appending cannot undo them -- there is no "dtoverlay=none", and a
-	# second dtoverlay line loads a second overlay rather than replacing the
-	# first. Only dtparam has last-wins semantics, and not reliably across
-	# sections. Runs before CONFIG_APPEND so it only ever sees vendor lines.
+	# CONFIG_REMOVE: role-declared globs whose matching config.txt directives get
+	# commented out. Runs before CONFIG_APPEND so it only ever sees vendor lines.
+	# The matcher is config-remove.sh, covered by test-config-remove.sh.
 	#
-	# Commented rather than deleted, so a card still shows what the vendor
-	# shipped and that its absence was chosen.
+	# A pattern matching nothing exits non-zero, and that is fatal here: it means a
+	# directive the role wanted gone is still live, which is silent on the card.
 	if [ -n "${CONFIG_REMOVE:-}" ]; then
 		echo "== disable role-removed config.txt directives ($ROLE) =="
-		local cfg="$BOOTSTAGE/config.txt" tmp="$BUILD/config.txt.filtered"
-		local line pat hit matched=""
-		: >"$tmp"
-		while IFS= read -r line || [ -n "$line" ]; do
-			hit=0
-			case "$line" in
-			\#* | '') ;;
-			*)
-				for pat in $CONFIG_REMOVE; do
-					# shellcheck disable=SC2254  # glob match is the point
-					case "$line" in
-					$pat)
-						hit=1
-						matched="$matched $pat"
-						break
-						;;
-					esac
-				done
-				;;
-			esac
-			if [ "$hit" -eq 1 ]; then
-				printf '# disabled by build-image.sh (%s): %s\n' "$ROLE" "$line" >>"$tmp"
-				echo "   disabled: $line"
-			else
-				printf '%s\n' "$line" >>"$tmp"
-			fi
-		done <"$cfg"
-		mv "$tmp" "$cfg"
-
-		# A pattern that matches nothing is a typo or a vendor change, and the
-		# directive stays enabled with nothing said. Warn rather than fail: a role
-		# may list a directive only some base images carry.
-		for pat in $CONFIG_REMOVE; do
-			case "$matched" in
-			*"$pat"*) ;;
-			*) echo "   !! CONFIG_REMOVE pattern matched nothing: $pat" ;;
-			esac
-		done
+		# shellcheck disable=SC2086  # word-splitting the pattern list is intended
+		CONFIG_REMOVE_LABEL="build-image.sh ($ROLE)" \
+			"$HERE/config-remove.sh" "$BOOTSTAGE/config.txt" $CONFIG_REMOVE
 	fi
 
 	if [ -n "${CONFIG_APPEND:-}" ]; then
