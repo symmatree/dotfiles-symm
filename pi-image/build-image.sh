@@ -286,38 +286,80 @@ install_grow_rootfs() {
 
 # =============================================================================
 # 2c. write the image manifest into the rootfs
-#     A card otherwise cannot say which image it came from: the date is in the
-#     artifact filename and nothing lands in the rootfs (coordinator#96).
+#     A card otherwise cannot say what it is (coordinator#96), and the ground
+#     platform reads this to show what each machine is running (coordinator#326).
 #
-#       /etc/fleet-image                   the canonical key=value record
+#       /etc/fleet-image                   the manifest
 #       /etc/issue.d/20-fleet-image.issue  shown pre-login on console and serial
 #       fleet-image-id.service             one line per boot into the journal
 #
-#     Every field is fixed at build time and none is derivable from another, so
-#     the manifest cannot drift from what it describes.
+#     FORMAT. A flat table of double-quoted strings, which is simultaneously
+#     valid TOML, a sourceable shell file, and a systemd EnvironmentFile -- so
+#     Python, Go and JS get a real parser instead of hand-rolled splitting, and
+#     EnvironmentFile= keeps working. Two rules make that true:
+#
+#       no whitespace around =   TOML permits K = "v" and so does every non-shell
+#                                parser, but `source` reads it as a command and
+#                                fails with `K: command not found`.
+#       values always quoted     and containing no $, since sourcing expands it.
+#
+#     VOCABULARY. The four ORG_OPENCONTAINERS_* keys are the controlled set the
+#     UI understands semantically: it links the source, resolves the revision
+#     against the ref, and shows the PR a sha came from. They are named for the
+#     OCI annotations so a disk image and a container image answer in one
+#     vocabulary. Anything else is artifact-specific, needs no agreement, and is
+#     displayed verbatim.
+#
+#     Build date is deliberately NOT identity: two identical artifacts can carry
+#     different dates and two different ones can share a date. FLEET_IMAGE holds
+#     the artifact name, which happens to contain a date, as a diagnostic.
 # =============================================================================
 write_manifest() {
-	local img base src
-	img="$(basename "$OUT_IMG")"    # the artifact name, as published (raw .img since #47)
-	base="$(basename "$RPIOS_URL")" # carries the suite and release date
-	src="${GITHUB_SHA:-$(git -C "$HERE" rev-parse HEAD 2>/dev/null || echo unknown)}"
+	local img base rev source ref
+	img="$(basename "$OUT_IMG")"
+	base="$(basename "$RPIOS_URL")"
+	rev="${GITHUB_SHA:-$(git -C "$HERE" rev-parse HEAD 2>/dev/null || echo unknown)}"
+	ref="${GITHUB_REF_NAME:-$(git -C "$HERE" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)}"
+
+	# A browsable URL, because the UI links it. Actions gives it directly;
+	# otherwise derive it from the remote, which may be SSH form.
+	if [ -n "${GITHUB_SERVER_URL:-}" ] && [ -n "${GITHUB_REPOSITORY:-}" ]; then
+		source="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+	else
+		source="$(git -C "$HERE" remote get-url origin 2>/dev/null || echo unknown)"
+		source="${source%.git}"
+		source="${source/git@github.com:/https://github.com/}"
+	fi
 
 	echo "== write /etc/fleet-image =="
 	mkdir -p "$ROOTFS/etc/issue.d" "$ROOTFS/etc/systemd/system/multi-user.target.wants"
 	cat >"$ROOTFS/etc/fleet-image" <<-EOF
 		# Written by dotfiles-symm pi-image/build-image.sh at build time.
 		# Immutable: describes the image this card was flashed from, not current state.
-		IMAGE=$img
-		ROLE=$ROLE
-		SOURCE=$src
-		BASE=$base
+		# Valid TOML, sourceable shell, and a systemd EnvironmentFile -- keep it that
+		# way: no spaces around =, values always quoted, no \$ in a value.
+		ORG_OPENCONTAINERS_IMAGE_SOURCE="$source"
+		ORG_OPENCONTAINERS_IMAGE_REVISION="$rev"
+		ORG_OPENCONTAINERS_IMAGE_REF_NAME="$ref"
+		FLEET_ROLE="$ROLE"
+		FLEET_IMAGE="$img"
+		FLEET_BASE="$base"
 	EOF
 	cat "$ROOTFS/etc/fleet-image"
+
+	# Prove the format rather than trust it: the build host has python3, and a
+	# manifest that stops being TOML is silent until something downstream fails.
+	python3 -c 'import tomllib,sys; tomllib.load(open(sys.argv[1],"rb"))' \
+		"$ROOTFS/etc/fleet-image"
+	# shellcheck disable=SC1090,SC1091  # sourcing what we just generated is the test
+	(set -a && . "$ROOTFS/etc/fleet-image")
+	echo "   parses as TOML and sources as shell"
 
 	# Pre-login banner. issue.d is a drop-in dir (raspberrypi-sys-mods already
 	# ships IP.issue there), so this survives base-files updates -- appending to
 	# /etc/issue would not.
-	printf 'image: %s (%s)\n' "$img" "${src:0:12}" >"$ROOTFS/etc/issue.d/20-fleet-image.issue"
+	printf 'image: %s (%s %s)\n' "$img" "$ref" "${rev:0:12}" \
+		>"$ROOTFS/etc/issue.d/20-fleet-image.issue"
 
 	# One line per boot, so a log or capture can be tied to the image that
 	# produced it. In /etc/systemd/system, not /usr/lib, so it lives in @ and does
@@ -333,7 +375,7 @@ write_manifest() {
 		Type=oneshot
 		RemainAfterExit=yes
 		EnvironmentFile=/etc/fleet-image
-		ExecStart=/bin/echo "fleet-image: ${IMAGE} role=${ROLE} source=${SOURCE} base=${BASE}"
+		ExecStart=/bin/echo "fleet-image: ${FLEET_IMAGE} role=${FLEET_ROLE} ref=${ORG_OPENCONTAINERS_IMAGE_REF_NAME} revision=${ORG_OPENCONTAINERS_IMAGE_REVISION} base=${FLEET_BASE}"
 
 		[Install]
 		WantedBy=multi-user.target
