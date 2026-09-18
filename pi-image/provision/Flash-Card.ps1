@@ -124,12 +124,20 @@ if ($missing) {
     throw "these are blank or absent in ${SecretsFile}: $($missing -join ', ')"
 }
 
-# The rendered file is YAML. A value carrying a double quote, a backslash or a
-# newline would break out of the scalar it is substituted into -- the PSK and the
-# password hash are the realistic candidates, and a malformed user-data is not
-# rejected, it is silently skipped, leaving a card with no user and no WiFi.
+# The rendered file is YAML. A double quote, backslash or newline in a value
+# would break out of the scalar it is substituted into, and cloud-init does not
+# reject a malformed user-data -- it skips it, leaving a card with no user and no
+# WiFi.
+#
+# IndexOfAny over an explicit char array, not a regex: in a single-quoted
+# PowerShell string `r and `n are literal backtick-r and backtick-n rather than
+# escapes, so the obvious character class silently becomes "any value containing
+# the letter r or n" -- which every SSH public key does.
+$yamlBreakers = [char[]]@('"', '\', [char]13, [char]10)
 foreach ($k in $vals.Keys) {
-    if ($vals[$k] -match '["\\`r`n]') { throw "value for $k contains a quote, backslash or newline, which would break the generated YAML" }
+    if ($vals[$k].IndexOfAny($yamlBreakers) -ge 0) {
+        throw "value for $k contains a double quote, backslash or newline, which would break the generated YAML"
+    }
 }
 
 # MUST be LF. cloud-init parses this on the Pi; PowerShell's default CRLF
