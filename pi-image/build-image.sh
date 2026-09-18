@@ -197,6 +197,19 @@ extract_source() {
 #     Runs on the staged $BOOTSTAGE before the initramfs regen reads config.txt.
 # =============================================================================
 apply_role_bootfs() {
+	# CONFIG_REMOVE: role-declared globs whose matching config.txt directives get
+	# commented out. Runs before CONFIG_APPEND so it only ever sees vendor lines.
+	# The matcher is config-remove.sh, covered by test-config-remove.sh.
+	#
+	# A pattern matching nothing exits non-zero, and that is fatal here: it means a
+	# directive the role wanted gone is still live, which is silent on the card.
+	if [ -n "${CONFIG_REMOVE:-}" ]; then
+		echo "== disable role-removed config.txt directives ($ROLE) =="
+		# shellcheck disable=SC2086  # word-splitting the pattern list is intended
+		CONFIG_REMOVE_LABEL="build-image.sh ($ROLE)" \
+			"$HERE/config-remove.sh" "$BOOTSTAGE/config.txt" $CONFIG_REMOVE
+	fi
+
 	if [ -n "${CONFIG_APPEND:-}" ]; then
 		local ca="$HERE/$CONFIG_APPEND"
 		[ -f "$ca" ] || {
@@ -482,12 +495,95 @@ regenerate_initramfs() {
 	# /boot/initrd.img-<kver> for both kernels, and -c declines to overwrite an
 	# existing one -- which would ship the vendor's btrfs-less initramfs, and a
 	# card that cannot find its root, with the build reporting success.
+	# WHAT IS SELECTED HERE, since the list is not an audit of the image's 633
+	# packages. The criterion is things that LOAD, in three forms:
+	#
+	#   a unit that starts at boot
+	#   a library mapped into other processes
+	#   a kernel module (resident, unswappable, unreclaimable -- the worst of the
+	#     three; that is what CONFIG_REMOVE in the role files is for, not this list)
+	#
+	# because the cost is pages resident or faulted in, not bytes on disk. A package
+	# shipping a binary nobody executes is not a candidate; there are hundreds of
+	# those and removing them buys nothing.
+	#
+	# Purge rather than mask, because a masked unit still has its binary and
+	# libraries on disk and a failed start still maps them.
+	#
+	# Read off a booted campod (systemctl list-unit-files --state=enabled, and
+	# list-units --state=running), so this is what the image actually starts:
+	#
+	#   RUNNING at boot, no consumer here:
+	#     avahi-daemon  mDNS. The fleet resolves through real DNS
+	#                   (local.symmatree.com); mDNS is unreliable across the
+	#                   broadcast domains this fleet spans.
+	#     cron          no jobs here. Note this does NOT cover the systemd timers --
+	#                   those are masked separately below.
+	#     udisks2       removable-media automounting.
+	#   ENABLED, starts and finds nothing:
+	#     bluez         dtoverlay=disable-bt means there is no adapter to attach to.
+	#   MAPPED into other processes rather than started:
+	#     libnss-mdns   an NSS module, loaded by anything that resolves a name.
+	#
+	# These do NOT meet the criterion and are removed only because they are dead
+	# weight -- say so rather than dressing them up: alsa-utils (nothing enabled or
+	# running), man-db (a daily timer, not a boot load), bluez-firmware (files).
+	#
+	# NOT removed:
+	#   console-setup, keyboard-configuration  these DO start at boot and would
+	#           otherwise qualify, but cloud-init's keyboard module drives them and
+	#           user-data sets a keymap. Removing them means removing that too.
+	#   e2fsprogs  Priority: required. Its scrub units are masked below instead --
+	#           ext4 scrubbing on a btrfs root.
+	#   apparmor   Docker confines containers with it.
+	#   polkitd    NetworkManager depends on it, and it is running.
+	#   wpa_supplicant  NetworkManager's 802.11 backend, running.
+	#   rpi-eeprom  no EEPROM on a Zero 2 W, but the coordinator and pocketterm
+	#           need it to update their bootloaders.
+	#
+	# Not -qq: the log should show what came out.
 	chroot "$ROOTFS" /bin/bash -eu -c '
 		export DEBIAN_FRONTEND=noninteractive
 		apt-get update -qq
 		apt-get install -y -qq btrfs-progs busybox-static
+		apt-get purge -y \
+			avahi-daemon libnss-mdns \
+			bluez bluez-firmware \
+			alsa-utils \
+			udisks2 \
+			man-db \
+			cron
+		apt-get autoremove --purge -y
+		# Nothing runs on a schedule. coordinator#282 masks these on a converged
+		# device; doing it here as well closes the window between flash and first
+		# converge, on a card whose timers would otherwise fire with Persistent=true
+		# and catch up every missed window at once. Same list as that role, so the
+		# two cannot drift -- add there and here together. Masking a unit whose
+		# package is absent is legal and keeps the decision made.
+		#
+		# systemd-tmpfiles-clean.timer is deliberately NOT masked: it is the only
+		# thing enforcing /tmp cleanup, and /tmp is a tmpfs here.
+		systemctl mask \
+			apt-daily.timer apt-daily-upgrade.timer \
+			man-db.timer dpkg-db-backup.timer logrotate.timer \
+			e2scrub_all.timer fstrim.timer
+		# Not a timer, so not in that list: ext4 scrubbing on a btrfs root.
+		systemctl mask e2scrub_reap.service
 		update-initramfs -u -k all
 	'
+
+	# Prove the purge. A leftover means apt kept something assumed gone.
+	echo "== purge check: these must not exist =="
+	local leftover=0 f
+	for f in usr/sbin/avahi-daemon usr/bin/bluetoothctl usr/bin/man usr/sbin/cron \
+		usr/lib/systemd/system/udisks2.service; do
+		if [ -e "$ROOTFS/$f" ]; then
+			echo "   STILL PRESENT: /$f"
+			leftover=1
+		fi
+	done
+	[ "$leftover" -eq 0 ] && echo "   none present -- purge clean"
+	echo "== packages remaining: $(chroot "$ROOTFS" dpkg-query -f '.\n' -W 2>/dev/null | wc -l) =="
 
 	# An initramfs FILE in bootfs proves nothing -- the base ships two. Check for
 	# the module itself.
