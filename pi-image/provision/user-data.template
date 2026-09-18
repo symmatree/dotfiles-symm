@@ -1,0 +1,122 @@
+#cloud-config
+#
+# Per-unit first-boot personalisation for a fleet btrfs image.
+#
+# RENDERED FILE -- do not edit a copy on an SD card. Edit
+# pi-image/provision/user-data.template and re-render with Flash-Card.ps1.
+# Placeholders are double-underscore delimited and filled from fleet.env;
+# Flash-Card.ps1 fails the render if any are left unsubstituted.
+#
+# HOW THIS RUNS. The image ships cloud-init with a NoCloud datasource pointed at
+# the boot partition (/etc/cloud/cloud.cfg.d/99_raspberry-pi.cfg:
+# `seedfrom: file:///boot/firmware`), and cloud-init-main.service carries
+# `RequiresMountsFor=/boot/firmware`, so it is ordered after our PARTUUID-keyed
+# mount. Dropping this file and meta-data on the FAT partition is the whole
+# mechanism -- no script, no initramfs fixup, no cmdline change.
+#
+# NoCloud will not read this without a meta-data beside it -- it calls
+# util.pathprefix2dict(d, required=["meta-data"]). There is no template for that
+# here: rpi-imager writes one, with an instance-id unique per imaging, and adds
+# `ds=nocloud;i=<id>` to cmdline.txt so the datasource cache survives a reboot
+# (/run is tmpfs, so without it discovery re-runs every boot).
+
+# The hostname is the only genuinely per-unit value; everything else in
+# fleet.env is fleet-constant. manage_etc_hosts keeps /etc/hosts consistent with
+# it so sudo does not complain about resolving the host.
+hostname: __HOSTNAME__
+manage_etc_hosts: true
+
+timezone: __TIMEZONE__
+keyboard:
+  model: pc105
+  layout: "__KEYMAP__"
+
+# SINGULAR `user:`, not plural `users:`. The singular form is merged OVER the
+# distro default_user from /etc/cloud/cloud.cfg, so the account keeps the group
+# list that comes with it (sudo, adm, dialout, gpio, spi, i2c, video, netdev,
+# plugdev, render...). A plural `users:` list without an explicit `- default`
+# entry bypasses that default and produces a group-less account
+# (raspberrypi/rpi-imager#1601) -- which on this fleet would mean no dialout for
+# the FC UART and no spi/i2c for the sensors.
+user:
+  name: __USERNAME__
+  shell: /bin/bash
+  lock_passwd: false
+  passwd: "__PW_HASH__"
+  ssh_authorized_keys:
+    - "__SSH_PUBKEY__"
+
+# Key-only. The password hash above exists for the serial console, not for sshd.
+ssh_pwauth: false
+
+# WiFi as a NetworkManager keyfile, written directly -- NOT via cloud-init's
+# `network-config`.
+#
+# cloud-init would render network-config through netplan (the image sets
+# `renderers: ['netplan', 'network-manager']`), and that path has a live defect:
+# /etc/cloud/cloud.cfg lists `netplan_nm_patch` in cloud_final_modules, but
+# cc_netplan_nm_patch.py is not in the cloud-init package. It was removed in
+# 25.2-1~bpo13+1+rpt19 and the reference was left behind. That pairing is what
+# produced the 0-byte /etc/netplan/90-NM-*.yaml and the unrecoverable WiFi in
+# coordinator/docs/coordinator-network.md.
+#
+# A keyfile is what nmtui writes when a human fixes one of these by hand, and it
+# never enters the netplan path at all. Mode 0600 because it carries the PSK;
+# NetworkManager refuses to load a world-readable connection file.
+#
+# Consequence worth knowing: cloud-init still reports `degraded` on every boot
+# because of that dangling module reference, so `cloud-init status` cannot be
+# used as a health gate. Reachability is the check.
+write_files:
+  - path: /etc/NetworkManager/system-connections/__WIFI_SSID__.nmconnection
+    owner: root:root
+    permissions: "0600"
+    content: |
+      [connection]
+      id=__WIFI_SSID__
+      type=wifi
+      autoconnect=true
+      autoconnect-priority=100
+
+      [wifi]
+      mode=infrastructure
+      ssid=__WIFI_SSID__
+
+      [wifi-security]
+      key-mgmt=wpa-psk
+      psk=__WIFI_PSK__
+
+      [ipv4]
+      method=auto
+
+      [ipv6]
+      method=auto
+      addr-gen-mode=default
+
+runcmd:
+  # cc_ssh writes host keys and authorized_keys but never starts sshd, and RPi
+  # OS ships the unit disabled. Enabling it is the vendor's own approach.
+  - [systemctl, enable, --now, ssh]
+  # NetworkManager watches system-connections/ and should pick the keyfile up on
+  # its own, but write_files runs in cloud-init's init stage, around when NM is
+  # starting, and that ordering is not verified. A reload is idempotent when the
+  # profile is already loaded. The failure it covers -- a pod that never joins
+  # WiFi -- costs a physical visit, which is what happened in July.
+  - [nmcli, connection, reload]
+  # The regulatory domain governs which channels the radio may use. The Zero 2 W
+  # is 2.4 GHz only so the practical effect is small, but a GUI flash sets this
+  # and an unset domain is a silent difference between cards.
+  - [raspi-config, nonint, do_wifi_country, __WIFI_COUNTRY__]
+
+# NOT USED, deliberately: the `rpi:` key.
+#
+# cc_raspberry_pi turns `rpi: {interfaces: {spi: true, ...}}` into
+# `raspi-config nonint do_spi 0`, which edits /boot/firmware/config.txt on the
+# running device and reboots. Device-tree config comes from the image
+# (pi-image/roles/<role>/config.append.txt) so that routine operation never
+# writes the FAT partition -- see that file for why. Using this key here would
+# hand that job back to a running device.
+#
+# The Imager CLI will not inject it either: imageSupportsCcRpi() is true only
+# for init_format "cloudinit-rpi", and a locally-selected image yields plain
+# "cloudinit".
