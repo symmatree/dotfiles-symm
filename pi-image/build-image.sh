@@ -496,39 +496,51 @@ regenerate_initramfs() {
 	# /boot/initrd.img-<kver> for both kernels, and -c declines to overwrite an
 	# existing one -- which would ship the vendor's btrfs-less initramfs, and a
 	# card that cannot find its root, with the build reporting success.
-	# PURGE, not mask. A masked unit still has its binary and libraries on disk,
-	# and a failed start still maps them, faults them in, and leaves those pages
-	# on the LRU. On a 417 MiB box whose measured failure mode is page-cache
-	# thrash, pages that are never loaded are worth more than boot seconds.
+	# WHAT IS SELECTED HERE, since the list is not an audit of the image's 633
+	# packages. The criterion is things that LOAD, in three forms:
 	#
-	# Everything here was checked as present in this base and as having no
-	# consumer on this fleet:
-	#   avahi-daemon libnss-mdns  mDNS. The fleet resolves through real DNS
-	#                             (local.symmatree.com); mDNS does not work
-	#                             reliably across broadcast domains, which this
-	#                             fleet spans.
-	#   bluez bluez-firmware      dtoverlay=disable-bt means bluetooth/btbcm/
-	#                             hci_uart are never loaded
-	#   alsa-utils                no audio
-	#   udisks2                   removable-media automounting
-	#   man-db                    man pages on an appliance
-	#   cron                      its timers are masked (coordinator#282); the
-	#                             daemon is separate and has no jobs here
+	#   a unit that starts at boot
+	#   a library mapped into other processes
+	#   a kernel module (resident, unswappable, unreclaimable -- the worst of the
+	#     three; that is what CONFIG_REMOVE in the role files is for, not this list)
 	#
-	# NOT purged, and why:
-	#   console-setup keyboard-configuration  cloud-init's keyboard module drives
-	#                             these, and user-data sets a keymap. Removing
-	#                             them means removing that too; a separate change.
-	#   e2fsprogs                 Debian Priority: required. Its scrub units are
-	#                             masked below instead.
-	#   apparmor                  Docker confines containers with it
-	#   polkitd                   NetworkManager depends on it
-	#   rpi-eeprom                the Zero 2 W has no EEPROM, but the coordinator
-	#                             and pocketterm do and this updates their
-	#                             bootloaders -- a fleet-wide purge removes that
+	# because the cost is pages resident or faulted in, not bytes on disk. A package
+	# shipping a binary nobody executes is not a candidate; there are hundreds of
+	# those and removing them buys nothing.
 	#
-	# e2scrub_reap is masked rather than purged: it is ext4 scrubbing, enabled in
-	# the base, on a filesystem that is btrfs.
+	# Purge rather than mask, because a masked unit still has its binary and
+	# libraries on disk and a failed start still maps them.
+	#
+	# Read off a booted campod (systemctl list-unit-files --state=enabled, and
+	# list-units --state=running), so this is what the image actually starts:
+	#
+	#   RUNNING at boot, no consumer here:
+	#     avahi-daemon  mDNS. The fleet resolves through real DNS
+	#                   (local.symmatree.com); mDNS is unreliable across the
+	#                   broadcast domains this fleet spans.
+	#     cron          its timers are masked (coordinator#282), but the daemon is
+	#                   a separate thing and has no jobs here.
+	#     udisks2       removable-media automounting.
+	#   ENABLED, starts and finds nothing:
+	#     bluez         dtoverlay=disable-bt means there is no adapter to attach to.
+	#   MAPPED into other processes rather than started:
+	#     libnss-mdns   an NSS module, loaded by anything that resolves a name.
+	#
+	# These do NOT meet the criterion and are removed only because they are dead
+	# weight -- say so rather than dressing them up: alsa-utils (nothing enabled or
+	# running), man-db (a daily timer, not a boot load), bluez-firmware (files).
+	#
+	# NOT removed:
+	#   console-setup, keyboard-configuration  these DO start at boot and would
+	#           otherwise qualify, but cloud-init's keyboard module drives them and
+	#           user-data sets a keymap. Removing them means removing that too.
+	#   e2fsprogs  Priority: required. Both its timers are masked below instead --
+	#           ext4 scrubbing on a btrfs root.
+	#   apparmor   Docker confines containers with it.
+	#   polkitd    NetworkManager depends on it, and it is running.
+	#   wpa_supplicant  NetworkManager's 802.11 backend, running.
+	#   rpi-eeprom  no EEPROM on a Zero 2 W, but the coordinator and pocketterm
+	#           need it to update their bootloaders.
 	#
 	# Not -qq: the log should show what came out.
 	chroot "$ROOTFS" /bin/bash -eu -c '
@@ -543,7 +555,7 @@ regenerate_initramfs() {
 			man-db \
 			cron
 		apt-get autoremove --purge -y
-		systemctl mask e2scrub_reap.service
+		systemctl mask e2scrub_reap.service e2scrub_all.timer
 		update-initramfs -u -k all
 	'
 
