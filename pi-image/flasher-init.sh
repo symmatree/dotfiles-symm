@@ -6,12 +6,11 @@
 # It re-images p2 from an image staged on p1 (coordinator#312). Nothing pivots to
 # a real root, so nothing holds p2 open and it can be rewritten underneath.
 #
-# IT DOES THE REAL WRITE. The guards are on the inputs, not on the action: it
-# proceeds only when a staged image is present, its sha256 matches, and the
-# partition table parses -- and stops without writing if any of those fail. A
-# fresh card has no staged image, so tryboot there is a report-and-reboot no-op.
-# The worst case is a card that has to be pulled and written from a reader, which
-# is the process this replaces.
+# It proceeds only when a staged image is present, its sha256 matches, and the
+# partition table parses, and stops without writing if any of those fail. A fresh
+# card has no staged image, so tryboot there reports and reboots. The worst case
+# is a card that has to be pulled and written from a reader, which is the process
+# this replaces.
 #
 # P2 ONLY. p1 carries the kernel, firmware and config.txt and is writable from
 # the booted system as ordinary files, so the halves are updated separately and
