@@ -349,8 +349,8 @@ write_manifest() {
 # =============================================================================
 install_sudoers() {
 	echo "== install /etc/sudoers.d/010_pi-nopasswd =="
-	# A real file, not a symlink: sudo validates the ownership of a symlink's
-	# TARGET and refuses the rule if it does not like what it finds.
+	# sudo validates the ownership of a symlink's TARGET, so this is written
+	# rather than stowed like the rest of the repo's config.
 	local sd="$ROOTFS/etc/sudoers.d/010_pi-nopasswd"
 	mkdir -p "$ROOTFS/etc/sudoers.d"
 	cat >"$sd" <<-'EOF'
