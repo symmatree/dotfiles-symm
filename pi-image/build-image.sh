@@ -522,12 +522,21 @@ regenerate_initramfs() {
 	#     udisks2       removable-media automounting.
 	#   ENABLED, starts and finds nothing:
 	#     bluez         dtoverlay=disable-bt means there is no adapter to attach to.
+	#                   bluez-firmware stays: it is files, and removing it buys
+	#                   nothing the criterion cares about.
 	#   MAPPED into other processes rather than started:
 	#     libnss-mdns   an NSS module, loaded by anything that resolves a name.
 	#
-	# These do NOT meet the criterion and are removed only because they are dead
-	# weight -- say so rather than dressing them up: alsa-utils (nothing enabled or
-	# running), man-db (a daily timer, not a boot load), bluez-firmware (files).
+	# NOT removed, because they never met the criterion and one of them was load
+	# bearing: alsa-utils, man-db and bluez-firmware are disk, not things that
+	# load. alsa-utils in particular cannot be purged at all --
+	#
+	#   raspi-config          Depends: ... alsa-utils ...
+	#   raspberrypi-sys-mods  Depends: raspi-config
+	#                         Recommends: rfkill, userconf-pi
+	#
+	# -- so taking it drags out raspi-config, raspberrypi-sys-mods, userconf-pi and
+	# raspberrypi-net-mods, which is provisioning and the radio. It cost a card.
 	#
 	# NOT removed:
 	#   console-setup, keyboard-configuration  these DO start at boot and would
@@ -542,18 +551,60 @@ regenerate_initramfs() {
 	#           need it to update their bootloaders.
 	#
 	# Not -qq: the log should show what came out.
-	chroot "$ROOTFS" /bin/bash -eu -c '
+	# A heredoc rather than -c '...', so the script can contain single quotes.
+	chroot "$ROOTFS" /bin/bash -euo pipefail -s <<'CHROOT'
 		export DEBIAN_FRONTEND=noninteractive
 		apt-get update -qq
 		apt-get install -y -qq btrfs-progs busybox-static
-		apt-get purge -y \
-			avahi-daemon libnss-mdns \
-			bluez bluez-firmware \
-			alsa-utils \
-			udisks2 \
-			man-db \
-			cron
-		apt-get autoremove --purge -y
+		PURGE="avahi-daemon libnss-mdns bluez udisks2 cron"
+
+		# GUARD 1: protect what we need from a later autoremove, rather than relying
+		# on nobody running one. The mark travels with the image, so it also covers
+		# the autoremove on host/ansible/roles/bootstrap's dist_upgrade path -- which
+		# is where that role does the same thing, for the same reason.
+		#
+		# Only packages currently marked AUTO, which is exactly the at-risk set;
+		# autoremove never touches a manual one. Marking only what is at risk avoids
+		# pinning half the system and defeating autoremove entirely.
+		#
+		# Order is load-bearing: mark while the archive index is still on disk.
+		idx=$(ls /var/lib/apt/lists/*raspberrypi*_Packages 2>/dev/null | head -1) || idx=""
+		if [ -z "$idx" ]; then
+			echo "!! no Raspberry Pi archive index -- cannot protect its packages" >&2
+			exit 1
+		fi
+		at_risk=$(comm -12 \
+			<(apt-mark showauto | sort -u) \
+			<(awk '/^Package: /{print $2}' "$idx" | sort -u))
+		if [ -n "$at_risk" ]; then
+			echo "== marking Pi-archive packages manual (autoremove-proof) =="
+			apt-mark manual $at_risk | tail -1
+		fi
+
+		# GUARD 2: ask apt what the purge would do, before it does it. "Unneeded" is
+		# a property of the dependency closure, not of intuition: raspi-config Depends
+		# alsa-utils, so purging alsa-utils takes raspi-config, raspberrypi-sys-mods
+		# and userconf-pi with it -- which is what cost a card. Marks do not help
+		# there; they govern autoremove, not reverse-dependency removal. Only asking
+		# does, and asking is what makes an aggressive list safe to hold.
+		echo "== simulating purge =="
+		would_remove=$(apt-get purge -s -y $PURGE | awk '/^Remv /{print $2}' | sort -u)
+		requested=$(printf '%s\n' $PURGE | sort -u)
+		extra=$(comm -13 <(echo "$requested") <(echo "$would_remove"))
+		if [ -n "$extra" ]; then
+			echo "!! purge would also remove packages that were not requested:" >&2
+			echo "$extra" | sed 's/^/     /' >&2
+			echo "   something in PURGE is a dependency of one of those." >&2
+			exit 1
+		fi
+		echo "   removal set matches the list exactly"
+
+		# Not -qq: the log should show what came out.
+		apt-get purge -y $PURGE
+
+		# No autoremove here. Guard 1 makes one safe, but its removal set is
+		# unbounded and guard 2 does not cover it, so it is left to the converge --
+		# where the same marks apply.
 		# Nothing runs on a schedule. coordinator#282 masks these on a converged
 		# device; doing it here as well closes the window between flash and first
 		# converge, on a card whose timers would otherwise fire with Persistent=true
@@ -570,12 +621,12 @@ regenerate_initramfs() {
 		# Not a timer, so not in that list: ext4 scrubbing on a btrfs root.
 		systemctl mask e2scrub_reap.service
 		update-initramfs -u -k all
-	'
+CHROOT
 
 	# Prove the purge. A leftover means apt kept something assumed gone.
 	echo "== purge check: these must not exist =="
 	local leftover=0 f
-	for f in usr/sbin/avahi-daemon usr/bin/bluetoothctl usr/bin/man usr/sbin/cron \
+	for f in usr/sbin/avahi-daemon usr/bin/bluetoothctl usr/sbin/cron \
 		usr/lib/systemd/system/udisks2.service; do
 		if [ -e "$ROOTFS/$f" ]; then
 			echo "   STILL PRESENT: /$f"
@@ -583,6 +634,23 @@ regenerate_initramfs() {
 		fi
 	done
 	[ "$leftover" -eq 0 ] && echo "   none present -- purge clean"
+
+	# And the other direction, which the check above structurally cannot see: an
+	# absence test never notices something that should still be THERE. These are
+	# the Pi-archive pieces provisioning and the radio depend on, and they are
+	# what autoremove took when it was still in this step.
+	echo "== survival check: these must still exist =="
+	local missing=0
+	for f in usr/bin/raspi-config usr/lib/raspberrypi-sys-mods/imager_custom \
+		usr/lib/userconf-pi/userconf usr/sbin/rfkill; do
+		if [ -e "$ROOTFS/$f" ]; then
+			echo "   present: /$f"
+		else
+			echo "!! MISSING: /$f -- provisioning or WiFi will not work" >&2
+			missing=1
+		fi
+	done
+	[ "$missing" -eq 0 ] || exit 1
 	echo "== packages remaining: $(chroot "$ROOTFS" dpkg-query -f '.\n' -W 2>/dev/null | wc -l) =="
 
 	# An initramfs FILE in bootfs proves nothing -- the base ships two. Check for
