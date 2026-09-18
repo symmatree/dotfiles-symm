@@ -522,12 +522,21 @@ regenerate_initramfs() {
 	#     udisks2       removable-media automounting.
 	#   ENABLED, starts and finds nothing:
 	#     bluez         dtoverlay=disable-bt means there is no adapter to attach to.
+	#                   bluez-firmware stays: it is files, and removing it buys
+	#                   nothing the criterion cares about.
 	#   MAPPED into other processes rather than started:
 	#     libnss-mdns   an NSS module, loaded by anything that resolves a name.
 	#
-	# These do NOT meet the criterion and are removed only because they are dead
-	# weight -- say so rather than dressing them up: alsa-utils (nothing enabled or
-	# running), man-db (a daily timer, not a boot load), bluez-firmware (files).
+	# NOT removed, because they never met the criterion and one of them was load
+	# bearing: alsa-utils, man-db and bluez-firmware are disk, not things that
+	# load. alsa-utils in particular cannot be purged at all --
+	#
+	#   raspi-config          Depends: ... alsa-utils ...
+	#   raspberrypi-sys-mods  Depends: raspi-config
+	#                         Recommends: rfkill, userconf-pi
+	#
+	# -- so taking it drags out raspi-config, raspberrypi-sys-mods, userconf-pi and
+	# raspberrypi-net-mods, which is provisioning and the radio. It cost a card.
 	#
 	# NOT removed:
 	#   console-setup, keyboard-configuration  these DO start at boot and would
@@ -548,12 +557,14 @@ regenerate_initramfs() {
 		apt-get install -y -qq btrfs-progs busybox-static
 		apt-get purge -y \
 			avahi-daemon libnss-mdns \
-			bluez bluez-firmware \
-			alsa-utils \
+			bluez \
 			udisks2 \
-			man-db \
 			cron
-		apt-get autoremove --purge -y
+		# NO autoremove. It took 42 packages beyond this list, including rfkill and
+		# most of the Pi archive -- everything nothing manually-installed depended
+		# on. host/ansible/roles/bootstrap guards that by marking Pi-archive packages
+		# manual first; rather than reproduce it, do not autoremove at all. The list
+		# above is the decision, and orphans are disk, which is not what this is for.
 		# Nothing runs on a schedule. coordinator#282 masks these on a converged
 		# device; doing it here as well closes the window between flash and first
 		# converge, on a card whose timers would otherwise fire with Persistent=true
@@ -575,7 +586,7 @@ regenerate_initramfs() {
 	# Prove the purge. A leftover means apt kept something assumed gone.
 	echo "== purge check: these must not exist =="
 	local leftover=0 f
-	for f in usr/sbin/avahi-daemon usr/bin/bluetoothctl usr/bin/man usr/sbin/cron \
+	for f in usr/sbin/avahi-daemon usr/bin/bluetoothctl usr/sbin/cron \
 		usr/lib/systemd/system/udisks2.service; do
 		if [ -e "$ROOTFS/$f" ]; then
 			echo "   STILL PRESENT: /$f"
@@ -583,6 +594,23 @@ regenerate_initramfs() {
 		fi
 	done
 	[ "$leftover" -eq 0 ] && echo "   none present -- purge clean"
+
+	# And the other direction, which the check above structurally cannot see: an
+	# absence test never notices something that should still be THERE. These are
+	# the Pi-archive pieces provisioning and the radio depend on, and they are
+	# what autoremove took when it was still in this step.
+	echo "== survival check: these must still exist =="
+	local missing=0
+	for f in usr/bin/raspi-config usr/lib/raspberrypi-sys-mods/imager_custom \
+		usr/lib/userconf-pi/userconf usr/sbin/rfkill; do
+		if [ -e "$ROOTFS/$f" ]; then
+			echo "   present: /$f"
+		else
+			echo "!! MISSING: /$f -- provisioning or WiFi will not work" >&2
+			missing=1
+		fi
+	done
+	[ "$missing" -eq 0 ] || exit 1
 	echo "== packages remaining: $(chroot "$ROOTFS" dpkg-query -f '.\n' -W 2>/dev/null | wc -l) =="
 
 	# An initramfs FILE in bootfs proves nothing -- the base ships two. Check for
