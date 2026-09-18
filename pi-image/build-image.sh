@@ -551,20 +551,60 @@ regenerate_initramfs() {
 	#           need it to update their bootloaders.
 	#
 	# Not -qq: the log should show what came out.
-	chroot "$ROOTFS" /bin/bash -eu -c '
+	# A heredoc rather than -c '...', so the script can contain single quotes.
+	chroot "$ROOTFS" /bin/bash -euo pipefail -s <<'CHROOT'
 		export DEBIAN_FRONTEND=noninteractive
 		apt-get update -qq
 		apt-get install -y -qq btrfs-progs busybox-static
-		apt-get purge -y \
-			avahi-daemon libnss-mdns \
-			bluez \
-			udisks2 \
-			cron
-		# NO autoremove. It took 42 packages beyond this list, including rfkill and
-		# most of the Pi archive -- everything nothing manually-installed depended
-		# on. host/ansible/roles/bootstrap guards that by marking Pi-archive packages
-		# manual first; rather than reproduce it, do not autoremove at all. The list
-		# above is the decision, and orphans are disk, which is not what this is for.
+		PURGE="avahi-daemon libnss-mdns bluez udisks2 cron"
+
+		# GUARD 1: protect what we need from a later autoremove, rather than relying
+		# on nobody running one. The mark travels with the image, so it also covers
+		# the autoremove on host/ansible/roles/bootstrap's dist_upgrade path -- which
+		# is where that role does the same thing, for the same reason.
+		#
+		# Only packages currently marked AUTO, which is exactly the at-risk set;
+		# autoremove never touches a manual one. Marking only what is at risk avoids
+		# pinning half the system and defeating autoremove entirely.
+		#
+		# Order is load-bearing: mark while the archive index is still on disk.
+		idx=$(ls /var/lib/apt/lists/*raspberrypi*_Packages 2>/dev/null | head -1) || idx=""
+		if [ -z "$idx" ]; then
+			echo "!! no Raspberry Pi archive index -- cannot protect its packages" >&2
+			exit 1
+		fi
+		at_risk=$(comm -12 \
+			<(apt-mark showauto | sort -u) \
+			<(awk '/^Package: /{print $2}' "$idx" | sort -u))
+		if [ -n "$at_risk" ]; then
+			echo "== marking Pi-archive packages manual (autoremove-proof) =="
+			apt-mark manual $at_risk | tail -1
+		fi
+
+		# GUARD 2: ask apt what the purge would do, before it does it. "Unneeded" is
+		# a property of the dependency closure, not of intuition: raspi-config Depends
+		# alsa-utils, so purging alsa-utils takes raspi-config, raspberrypi-sys-mods
+		# and userconf-pi with it -- which is what cost a card. Marks do not help
+		# there; they govern autoremove, not reverse-dependency removal. Only asking
+		# does, and asking is what makes an aggressive list safe to hold.
+		echo "== simulating purge =="
+		would_remove=$(apt-get purge -s -y $PURGE | awk '/^Remv /{print $2}' | sort -u)
+		requested=$(printf '%s\n' $PURGE | sort -u)
+		extra=$(comm -13 <(echo "$requested") <(echo "$would_remove"))
+		if [ -n "$extra" ]; then
+			echo "!! purge would also remove packages that were not requested:" >&2
+			echo "$extra" | sed 's/^/     /' >&2
+			echo "   something in PURGE is a dependency of one of those." >&2
+			exit 1
+		fi
+		echo "   removal set matches the list exactly"
+
+		# Not -qq: the log should show what came out.
+		apt-get purge -y $PURGE
+
+		# No autoremove here. Guard 1 makes one safe, but its removal set is
+		# unbounded and guard 2 does not cover it, so it is left to the converge --
+		# where the same marks apply.
 		# Nothing runs on a schedule. coordinator#282 masks these on a converged
 		# device; doing it here as well closes the window between flash and first
 		# converge, on a card whose timers would otherwise fire with Persistent=true
@@ -581,7 +621,7 @@ regenerate_initramfs() {
 		# Not a timer, so not in that list: ext4 scrubbing on a btrfs root.
 		systemctl mask e2scrub_reap.service
 		update-initramfs -u -k all
-	'
+CHROOT
 
 	# Prove the purge. A leftover means apt kept something assumed gone.
 	echo "== purge check: these must not exist =="
