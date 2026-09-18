@@ -334,36 +334,25 @@ write_manifest() {
 }
 
 # =============================================================================
-# 2e. passwordless sudo for the uid-1000 account
-#     The base image carries no sudoers drop-in for `pi`. Convergence drives
-#     ansible over SSH with `become: true` and no become password, so without
-#     this every play stops at a sudo prompt on a connection with no tty -- a
-#     hang, not an auth error. In the image rather than in provisioning, so it
-#     holds however a card was personalised.
+# 2e. passwordless sudo. Convergence drives ansible with `become: true` and no
+#     become password, so without this every play hangs at a sudo prompt on a
+#     connection with no tty. In the image, so it holds however a card was
+#     personalised.
 #
-#     The filename is the vendor's because userconf-pi's `userconf` rewrites
-#     exactly this path when it renames the account.
-#
-#     Inert as built: `pi` is `!`-locked with /usr/sbin/nologin until
-#     provisioning enables the account.
+#     Keep the vendor's filename: userconf-pi rewrites exactly this path when it
+#     renames the account.
 # =============================================================================
 install_sudoers() {
 	echo "== install /etc/sudoers.d/010_pi-nopasswd =="
-	# sudo validates the ownership of a symlink's TARGET, so this is written
-	# rather than stowed like the rest of the repo's config.
 	local sd="$ROOTFS/etc/sudoers.d/010_pi-nopasswd"
 	mkdir -p "$ROOTFS/etc/sudoers.d"
+	# A file, not a stow symlink: sudo validates the ownership of the target.
 	cat >"$sd" <<-'EOF'
 		pi ALL=(ALL) NOPASSWD: ALL
 	EOF
 	chown root:root "$sd"
 	chmod 0440 "$sd"
-
-	# Validate with the TARGET's sudo. A sudoers file that does not parse disables
-	# sudo entirely, and the first thing to notice is a device in the field that
-	# cannot get root.
 	chroot "$ROOTFS" /usr/sbin/visudo -cf /etc/sudoers.d/010_pi-nopasswd
-	ls -l "$sd"
 }
 
 # =============================================================================
@@ -392,17 +381,14 @@ install_flasher_boot() {
 	# busybox-static comes out of the chroot apt pass, which has already torn its
 	# binds down by now -- so this step is host-side: copy the binary, build the
 	# cpio, write the configs.
-	local fdir="$BUILD/flasher" bb=""
+	local fdir="$BUILD/flasher"
 	rm -rf "$fdir"
 	mkdir -p "$fdir"/{bin,proc,sys,dev,mnt}
-	for c in usr/bin/busybox bin/busybox; do
-		[ -x "$ROOTFS/$c" ] && bb="$ROOTFS/$c" && break
-	done
-	[ -n "$bb" ] || {
+	[ -x "$ROOTFS/usr/bin/busybox" ] || {
 		echo "!! busybox-static did not land in the rootfs" >&2
 		exit 1
 	}
-	cp "$bb" "$fdir/bin/busybox"
+	cp "$ROOTFS/usr/bin/busybox" "$fdir/bin/busybox"
 
 	sed -e "s|@FLASH_DIR@|$FLASH_DIR|g" "$HERE/flasher-init.sh" >"$fdir/init"
 	chmod 0755 "$fdir/init"
@@ -432,6 +418,19 @@ install_flasher_boot() {
 	ls -l "$BOOTSTAGE/initramfs-flash.gz" "$BOOTSTAGE/tryboot.txt" "$BOOTSTAGE/cmdline-flash.txt"
 	echo "== tryboot.txt tail: =="
 	tail -n 5 "$BOOTSTAGE/tryboot.txt"
+}
+
+# =============================================================================
+# 2g. no swap. An appliance that cannot fit in its RAM should fail visibly, and
+#     rpi-swap's default writeback file lands on the SD card. swap.conf(5).
+# =============================================================================
+install_no_swap() {
+	echo "== disable swap (rpi-swap Mechanism=none) =="
+	mkdir -p "$ROOTFS/etc/rpi/swap.conf.d"
+	cat >"$ROOTFS/etc/rpi/swap.conf.d/10-no-swap.conf" <<-'EOF'
+		[Main]
+		Mechanism=none
+	EOF
 }
 
 # =============================================================================
@@ -686,6 +685,7 @@ main() {
 	install_grow_rootfs
 	write_manifest
 	install_sudoers
+	install_no_swap
 	regenerate_initramfs
 	install_flasher_boot
 	build_target
