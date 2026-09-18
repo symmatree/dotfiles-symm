@@ -58,7 +58,7 @@ new `roles/<name>.env` and adding it to the matrix in `build-pi-image.yaml`.
 | `test-assemble.sh` | local proof: dummy rootfs -> loopback image -> assemble -> mount per the generated fstab -> assert (all seven subvols, exclusive split, `ro`-`/usr` + `remount,rw` *of the assembled fstab* — note the **booted** `/usr` comes up `rw`, see [#96](https://github.com/symmatree/coordinator/issues/96), `@data` nesting under `/var`, docker + `@scratch` `+C`). Needs a btrfs-capable kernel + `sudo`. | done |
 | `verify-in-vm.sh` | run `test-assemble.sh` inside a throwaway KVM guest -- for hosts whose kernel lacks btrfs (e.g. the Talos notebook host). | done |
 | `build-image.sh` | **convert path.** Download+verify the pinned official RPi OS Lite Trixie arm64 image, extract its rootfs + boot partition, natively chroot the arm64 rootfs to regenerate the initramfs **with btrfs**, build a fresh MBR image (FAT `bootfs` p1 + btrfs p2 via `assemble-btrfs.sh`), write the image manifest, fix up `cmdline.txt`/`config.txt`. arm64 + btrfs kernel only (CI: `ubuntu-24.04-arm`). | **boots on hardware** |
-| `provision/` | per-unit identity at flash time -- `firstrun.sh` template + `Flash-Card.ps1`. FAT-partition only, so the flashing host needs no btrfs/WSL. | **being replaced by cloud-init `user-data`, coordinator#238** |
+| `provision/` | per-unit identity at flash time -- cloud-init `user-data` template + `Flash-Card.ps1`. FAT-partition only, so the flashing host needs no btrfs/WSL. | done |
 | `.github/workflows/build-pi-image.yaml` | run `build-image.sh` -> upload the compressed `.img` on `ubuntu-24.04-arm`, per role. | done |
 | mmdebstrap rootfs config + genimage | the scratch build path | **TODO** |
 
@@ -116,37 +116,23 @@ The image is generic and secret-free: it has **no login** (the vendor `pi` accou
 `!`-locked in `/etc/shadow`), no SSH host keys, and no WiFi. Identity is injected per unit
 after the flash, touching **only the FAT partition** (coordinator#96).
 
-The vehicle is the vendor's own mechanism, which this image keeps working:
+The vehicle is cloud-init, which the image ships with a NoCloud datasource already pointed
+at the boot partition (`seedfrom: file:///boot/firmware`, and
+`RequiresMountsFor=/boot/firmware` on `cloud-init-main.service`). `Flash-Card.ps1` renders
+[`provision/user-data.template`](provision/) and rpi-imager writes it, plus a generated
+`meta-data`, onto the FAT partition. One boot, no script, no initramfs fixup, no
+`cmdline.txt` surgery of ours.
 
-1. A `firstrun.sh` is written to the FAT partition and
-   ` systemd.run=/boot/firstrun.sh systemd.run_success_action=reboot systemd.unit=kernel-command-line.target`
-   is appended to `cmdline.txt`.
-2. The initramfs script `imager_fixup` (from `raspberrypi-sys-mods`, present in the pinned
-   base and carried into our regenerated initramfs) reads `/boot/firmware` out of the root
-   fs's `/etc/fstab` -- it resolves our `PARTUUID=` spec fine -- mounts it rw, rewrites
-   `/boot/` -> `/boot/firmware/` in both `cmdline.txt` and the script's self-cleanup tail,
-   and then **reboots**. So boot 1 never reaches systemd.
-3. On boot 2 systemd runs the script: hostname -> SSH keys -> `userconf` rename (`usermod -m`,
-   so `~/.ssh` follows the home dir) -> `imager_custom set_wlan` (writes a NetworkManager
-   keyfile) -> self-delete -> reboot.
+It sets the hostname, creates the account with its SSH key and password hash, enables
+`ssh.service`, and writes WiFi as a NetworkManager keyfile. SSH host keys come from
+`regenerate_ssh_host_keys.service`, enabled in the base image. Passwordless sudo comes from
+`/etc/sudoers.d/010_pi-nopasswd`, which the base no longer ships and `build-image.sh`
+installs.
 
-SSH host keys come from `regenerate_ssh_host_keys.service`, enabled in the base image.
-Passwordless sudo comes from `/etc/sudoers.d/010_pi-nopasswd`, which the base image no longer
-ships and `build-image.sh` installs instead; the name is the vendor's so that `userconf`'s
-rename still finds it.
-
-There is no `wpa_supplicant.conf`-on-boot-partition path any more -- WiFi is a
-NetworkManager keyfile on the *root* filesystem -- so a FAT-only flow has to write it
-indirectly. `userconf.txt` and an empty `ssh` file still work for the user account and sshd,
-but cannot carry WiFi.
-
-> [!NOTE]
-> This flow is being replaced by cloud-init `user-data`
-> ([coordinator#238](https://github.com/symmatree/coordinator/issues/238)). `firstrun.sh` still
-> works -- `imager_fixup` and `imager_custom` are both still shipped -- but the vendor moved
-> its own first-boot path to cloud-init (`raspberrypi-sys-mods` `6916ea2`, *"Functionality
-> replaced by cloud-init and initramfs"*), and the template here was reverse-engineered from an
-> Imager run against a *Legacy/Bookworm* entry, i.e. a different OS from the one this builds.
+WiFi is **not** supplied as cloud-init `network-config`: that renders through netplan, and
+`/etc/cloud/cloud.cfg` still lists a `netplan_nm_patch` module the package no longer
+contains. See [`provision/README.md`](provision/README.md) for the detail and for why
+`cloud-init status` reports `degraded` on every card regardless.
 
 ## Run the test
 
