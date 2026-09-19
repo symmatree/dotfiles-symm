@@ -1,30 +1,36 @@
 #!/usr/bin/env python3
-"""Check a device's observations against what the image build claims it did.
+"""The integration test for the imaging code: did the patches' MECHANISMS work?
 
-    ssh pi@<host> sudo python3 - < pi-image/probe-claims.py > /tmp/<host>.json
-    pi-image/check-claims.py /tmp/<host>.json
+    pi-image/run-claims-check.sh <host>          # probe + check in one step
+    pi-image/check-claims.py <host>.json         # check an existing probe
 
-Every check traces to a line in `roles/<role>.env`, `roles/<role>/config.append.txt`,
-`build-image.sh` or `assemble-btrfs.sh` -- the expectations are READ FROM THE BUILD,
-not restated here, so a role change cannot leave a stale copy behind. Nothing is
-checked because somebody thought it looked interesting.
+Run it after changing something you are worried about. Ideally this would run on
+merge against a VM or a spare Pi with automated flashing; until that exists it is
+run by hand, which is still better than finding out on the vehicle.
 
-This is deliberately NOT a health check. Load, free space, failed units and
-journal state are a different question about a different subject; see
-coordinator#248, which makes the same distinction.
+## What it tests, and what it deliberately does not
 
-Three outcomes per claim, and the third one matters:
+Not a health check. Load, free space, failed units and journal state are a
+different question about a different subject.
 
-    PASS     the claim is declared and observably took effect
-    FAIL     the claim is declared and observably did not
-    UNKNOWN  the probe could not see (ran unprivileged, or the evidence is
-             not reachable from userspace) -- never counted as a failure
+Not a golden copy of the configuration either. Restating every purged package
+proves nothing about the purge and turns every deliberate edit into a failure.
+One sentinel is enough to show the mechanism ran.
 
-Exit 0 if nothing failed, 1 otherwise. UNKNOWNs do not fail the run; they are
-listed so the gap is visible rather than silently scored as a pass.
+What earns a check here is a mechanism that is **fragile**, or that depends on
+**two things agreeing**, and whose failure is **remote and silent** -- a file
+dropped in a directory that some other tool is supposed to notice, where nothing
+reports the omission and the card just quietly behaves differently. Test until
+fear turns into boredom, then stop.
+
+Expectations below are written down HERE, independently, in the form we believe
+they ought to be. They are not read out of `build-image.sh`: a test that derives
+its expectations from the code under test cannot fail when that code is wrong.
+If someone drops packages from PURGE, the sentinel below still says avahi-daemon
+must be gone, and the run fails until a human decides the change was intended.
+That drift is the signal, not a defect -- same as any unit test.
 """
 
-import fnmatch
 import json
 import os
 import re
@@ -32,374 +38,343 @@ import subprocess
 import sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = os.path.dirname(HERE)
-SUBVOLS = ["@", "@usr", "@var", "@home", "@data", "@scratch", "@snapshots"]
 
-# Packages the purge must not remove, because a dependency edge would take them.
-# raspi-config Depends alsa-utils; raspberrypi-sys-mods Depends raspi-config.
-# This cost a card once -- see PIPELINE.md "apt-get purge cascades".
+PASS, FAIL, UNKNOWN, SKIP = "PASS", "FAIL", "UNKNOWN", "SKIP"
+
+# Roles whose claims differ. Only what this file needs -- not a copy of the role.
+ROLE_EXPECT = {
+    "campod": {
+        "data_mount": "/var/lib/campod",
+        "cma_kb": 131072,          # dtoverlay=cma,cma-128
+        "want_nodes": ["spidev", "udc"],
+        "want_absent": ["drm_cards", "sound_cards"],
+        "console_is_uart": True,   # serial console re-appended LAST
+        "blacklisted": ["drm", "snd_bcm2835"],
+    },
+    "coordinator": {
+        "data_mount": "/var/lib/coordinator",
+        "cma_kb": None,
+        "want_nodes": ["i2c_bus"],  # the BUS is the image's half; i2c-dev is ansible's
+        "want_absent": [],
+        "console_is_uart": False,   # the FC owns that UART; no serial console at all
+        "blacklisted": [],
+    },
+    "pocketterm": {
+        "data_mount": "/var/lib/store",
+        "cma_kb": None,
+        "want_nodes": [],
+        "want_absent": [],
+        "console_is_uart": False,
+        "blacklisted": [],
+    },
+}
+
+# One package that must be gone, and the ones that must have survived. The
+# survivors are the point: raspi-config Depends alsa-utils and
+# raspberrypi-sys-mods Depends raspi-config, so an over-broad purge takes
+# provisioning and the radio with it and produces a card that boots and never
+# joins WiFi. An absence check cannot see that; both directions are needed.
+PURGE_SENTINEL = "avahi-daemon"
 PURGE_SURVIVORS = ["raspi-config", "raspberrypi-sys-mods", "userconf-pi", "rfkill"]
 
-# A config.txt directive is only real if something appeared. Left: a regex over
-# the directive as written in config.append.txt. Right: the observation key and
-# what it has to show.
-#
-# KNOWN GAP: a directive with no entry here still gets its presence checked, but
-# nothing checks its effect, and the run says nothing about the omission. So
-# coverage degrades silently as roles gain hardware. Adding the directive here is
-# the fix; noticing that it is missing is currently a human's job.
-DT_EFFECTS = [
-    (r"^enable_uart=1", "tty", lambda v: any("ttyAMA" in x for x in v),
-     "a PL011/mini-UART tty"),
-    (r"^dtparam=spi=on", "spidev", lambda v: bool(v), "at least one /dev/spidev*"),
-    (r"^dtparam=i2c_arm=on", "i2c", lambda v: bool(v), "at least one /dev/i2c-*"),
-    (r"^dtoverlay=dwc2", "udc", lambda v: bool(v), "a USB device controller"),
-]
+# One masked timer is enough to show `systemctl mask` took effect in the chroot.
+MASK_SENTINEL = "apt-daily.timer"
+
+SUBVOLS = ["@", "@usr", "@var", "@home", "@data", "@scratch", "@snapshots"]
+
+DISK_ID = "c0dec0de"  # fixed MBR identifier, so PARTUUIDs match across cards
 
 
-class Sources:
-    """Reads build inputs AT THE REVISION THE IMAGE WAS BUILT FROM.
-
-    This is the whole reason /etc/fleet-image carries a gitsha. Checking a
-    device against the working tree asks "does this card match what we would
-    build today", which is a different and usually wrong question -- a card
-    flashed last week fails every claim added since, and the report blames the
-    device for the repo moving. Verified the hard way: the first run of this
-    checker reported ten failures on a healthy card, seven of them claims that
-    did not exist when its image was built.
-
-    Falls back to the working tree only when the revision is unavailable, and
-    says so loudly, because the answer then means something weaker.
-    """
-
-    def __init__(self, revision):
-        self.revision = revision
-        self.from_worktree = False
-        if revision:
-            ok = subprocess.run(
-                ["git", "-C", REPO, "cat-file", "-e", f"{revision}^{{commit}}"],
-                capture_output=True,
-            )
-            if ok.returncode == 0:
-                return
-        self.from_worktree = True
-
-    def read(self, relpath):
-        """relpath is relative to the repo root, e.g. pi-image/build-image.sh."""
-        if not self.from_worktree:
-            got = subprocess.run(
-                ["git", "-C", REPO, "show", f"{self.revision}:{relpath}"],
-                capture_output=True, text=True,
-            )
-            if got.returncode == 0:
-                return got.stdout
-            return None  # the file did not exist at that revision
-        try:
-            with open(os.path.join(REPO, relpath)) as fh:
-                return fh.read()
-        except OSError:
-            return None
-
-    def describe(self):
-        if self.from_worktree:
-            return ("WORKING TREE -- the image's revision is not in this checkout, so "
-                    "claims added since it was built will show as failures")
-        return f"{self.revision[:10]} (the revision this image was built from)"
-
-
-def parse_env_text(text):
-    """Read roles/<role>.env. Shell, but only ever flat KEY=VALUE assignments."""
-    out = {}
-    if text:
-        for line in text.splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or "=" not in line:
-                continue
-            key, _, value = line.partition("=")
-            if not re.match(r"^[A-Z_]+$", key):
-                continue
-            out[key] = value.strip().strip('"').strip("'")
-    return out
-
-
-def build_constants(sources):
-    """Pull PURGE and the masked-unit list out of build-image.sh itself."""
-    src = sources.read("pi-image/build-image.sh") or ""
-    purge = re.search(r'^\s*PURGE="([^"]+)"', src, re.M)
-    mask = re.search(r"systemctl mask \\\n(.*?)\n\t*# ", src, re.S)
-    units = re.findall(r"[\w.-]+\.timer", mask.group(1)) if mask else []
-    return (purge.group(1).split() if purge else []), units
-
-
-def cards(entries):
-    """Real card nodes only. /proc/asound/cards is a FILE, not a sound card --
-    a startswith('card') test counts it and reports audio that is not there."""
-    return [e for e in entries if re.match(r"^card\d+$", e)]
-
-
-def console_matches(token, want, aliases):
-    """Compare a console= token, resolving the firmware's serial alias.
-
-    cmdline.txt carries `console=serial0,115200`; the firmware substitutes the
-    alias, so /proc/cmdline carries `console=ttyAMA0,115200`. Both name the same
-    port, and a checker that does not know this fails a correct device.
-    """
-    if token == want:
-        return True
-    dev_t, _, rate_t = token.partition("console=")[2].partition(",")
-    dev_w, _, rate_w = want.partition("console=")[2].partition(",")
-    if rate_t != rate_w:
-        return False
-    return aliases.get(dev_w, dev_w) == aliases.get(dev_t, dev_t)
-
-
-class Report:
-    def __init__(self):
+class Checks:
+    def __init__(self, obs):
+        self.obs = obs
         self.rows = []
+        self.role = obs["fleet_image"]["keys"].get("FLEET_ROLE")
+        self.expect = ROLE_EXPECT.get(self.role, {})
+        self.mounts = {m["target"]: m for m in obs["mounts"]}
+        self.nodes = obs["device_nodes"]
 
-    def add(self, status, claim, detail, source):
-        self.rows.append((status, claim, detail, source))
+    def add(self, status, name, why, detail):
+        self.rows.append((status, name, why, detail))
 
-    def ok(self, claim, detail, source):
-        self.add("PASS", claim, detail, source)
+    def check(self, name, why, fn):
+        """fn returns (ok, detail), or (None, detail) when it cannot tell."""
+        try:
+            ok, detail = fn()
+        except Exception as exc:  # noqa: BLE001 -- a broken check is a finding
+            self.add(UNKNOWN, name, why, f"check raised: {exc}")
+            return
+        if ok is None:
+            self.add(UNKNOWN, name, why, detail)
+        else:
+            self.add(PASS if ok else FAIL, name, why, detail)
 
-    def bad(self, claim, detail, source):
-        self.add("FAIL", claim, detail, source)
+    # -- the checks ---------------------------------------------------------
 
-    def unknown(self, claim, detail, source):
-        self.add("UNKNOWN", claim, detail, source)
+    def run(self):
+        o, e = self.obs, self.expect
 
-    def render(self):
-        width = max(len(r[1]) for r in self.rows)
-        order = {"FAIL": 0, "UNKNOWN": 1, "PASS": 2}
-        for status, claim, detail, source in sorted(
-            self.rows, key=lambda r: (order[r[0]], r[1])
-        ):
-            print(f"{status:<8} {claim:<{width}}  {detail}")
-            if status != "PASS":
-                print(f"{'':<8} {'':<{width}}  declared in: {source}")
-        fails = sum(1 for r in self.rows if r[0] == "FAIL")
-        unknowns = sum(1 for r in self.rows if r[0] == "UNKNOWN")
-        passes = len(self.rows) - fails - unknowns
-        print(f"\n{passes} pass, {fails} fail, {unknowns} unknown")
-        return 1 if fails else 0
+        self.check(
+            "purge/mechanism",
+            "an over-broad purge is silent until something needs the package",
+            lambda: (PURGE_SENTINEL not in o["packages_installed"],
+                     f"{PURGE_SENTINEL}: "
+                     + ("absent" if PURGE_SENTINEL not in o["packages_installed"]
+                        else "STILL INSTALLED")))
+
+        missing = [p for p in PURGE_SURVIVORS if p not in o["packages_installed"]]
+        self.check(
+            "purge/cascade-guard",
+            "purging one package can take provisioning and the radio with it",
+            lambda: (not missing,
+                     "all survivors present" if not missing
+                     else f"a dependency took: {missing}"))
+
+        self.check(
+            "config.txt/in-force",
+            "appended lines land at the END of the vendor file; if that file ends "
+            "inside a [cm4]/[cm5] section every one of them is silently inert",
+            self._config_in_force)
+
+        if e.get("cma_kb"):
+            self.check(
+                "config.txt/removal-took",
+                "CONFIG_REMOVE comments out a vendor line by glob; a suite bump can "
+                "change that line's text and the glob then matches nothing",
+                lambda: (o["cma_total_kb"] == e["cma_kb"],
+                         f"CmaTotal {o['cma_total_kb']} kB, expected {e['cma_kb']} "
+                         "(256 MB would mean vc4-kms-v3d is still loaded)"))
+
+        for key in e.get("want_absent", []):
+            self.check(
+                f"config.txt/{key}-gone",
+                "the removal is only real if the driver stopped binding",
+                lambda key=key: self._absent(key))
+
+        for mod in e.get("blacklisted", []):
+            self.check(
+                f"blacklist/{mod}",
+                "modprobe.d has to be copied INTO the initramfs; coldplug happens "
+                "before the rootfs is up, so a miss here loads the module anyway",
+                lambda mod=mod: (mod not in o["modules_loaded"],
+                                 "not loaded" if mod not in o["modules_loaded"]
+                                 else "LOADED"))
+
+        if e.get("console_is_uart"):
+            self.check(
+                "cmdline/console-order",
+                "/dev/console is the LAST console= token; get the order wrong and "
+                "systemd's output goes to a monitor nobody has",
+                self._console_order)
+
+        self.check(
+            "subvols/graph",
+            "a subvolume that fails to mount leaves its mountpoint working but "
+            "backed by the wrong subvolume",
+            self._subvols)
+
+        self.check(
+            "subvols/@data-lockstep",
+            "DATA_MOUNT must equal coord_state_root in the coordinator repo; if "
+            "they diverge captures land on @var with no error and no warning",
+            self._data_mount)
+
+        self.check(
+            "mount/usr-ro",
+            "the write-frugality pillar; only meaningful on a box that has not "
+            "been converged since boot, since a converge remounts it rw",
+            self._usr_ro)
+
+        self.check(
+            "mount/nodatacow",
+            "nodatacow CANNOT be a per-subvolume mount option -- it has to be an "
+            "inode flag, and a fstab line saying otherwise is silently discarded",
+            self._nodatacow)
+
+        self.check(
+            "mount/boot-firmware",
+            "no nofail: that drops the Before=local-fs.target ordering and lets "
+            "first-boot provisioning race an empty mountpoint",
+            self._boot_firmware)
+
+        self.check(
+            "manifest/three-formats",
+            "/etc/fleet-image must parse as TOML, as shell, and as an "
+            "EnvironmentFile; one space around an = breaks sourcing only",
+            lambda: (bool(o["fleet_image"].get("parses_toml")
+                          and o["fleet_image"].get("shell_safe")),
+                     f"toml={o['fleet_image'].get('parses_toml')} "
+                     f"shell_safe={o['fleet_image'].get('shell_safe')}"))
+
+        self.check(
+            "swap/off",
+            "rpi-swap's drop-in directory is upstream's; a rename re-enables swap "
+            "onto the SD card silently",
+            lambda: (not [x for x in o["swaps"][1:] if x.strip()],
+                     "no swap active" if not [x for x in o["swaps"][1:] if x.strip()]
+                     else f"swap ACTIVE: {o['swaps'][1:]}"))
+
+        self.check(
+            "timers/masked",
+            "masking happens in the chroot; if it silently did not take, timers "
+            "with Persistent=true catch up every missed window at once",
+            lambda: (o["unit_states"].get(MASK_SENTINEL) in ("masked", "absent"),
+                     f"{MASK_SENTINEL}: {o['unit_states'].get(MASK_SENTINEL, 'absent')}"))
+
+        self.check(
+            "sudo/nopasswd",
+            "sudo validates the OWNERSHIP of a symlink's target, so this must be a "
+            "copy; without it non-interactive provisioning hangs at a prompt",
+            self._sudoers)
+
+        self.check(
+            "disk/partuuid-stable",
+            "the fixed MBR id is what makes PARTUUIDs identical across cards; the "
+            "vendor's own first-boot resize randomises it",
+            self._partuuid)
+
+        self.check(
+            "disk/grow-rootfs",
+            "p2 is expanded on every boot; if it stops the card silently stays the "
+            "size it was built and nothing says so until it fills",
+            self._grew)
+
+        return self.rows
+
+    # -- individual predicates ----------------------------------------------
+
+    def _config_in_force(self):
+        """Proven by a node that only the appended block can have produced."""
+        want = self.expect.get("want_nodes", [])
+        if not want:
+            return None, "this role appends nothing with an observable node"
+        got = {}
+        for key in want:
+            if key == "i2c_bus":
+                got[key] = self.nodes.get("i2c_buses") or []
+            elif key == "drm_cards":
+                got[key] = self._cards("drm")
+            else:
+                got[key] = self.nodes.get(key) or []
+        missing = [k for k, v in got.items() if not v]
+        return (not missing,
+                f"{got}" if not missing else f"nothing appeared for {missing}")
+
+    def _cards(self, key):
+        return [c for c in self.nodes.get(key, []) if re.match(r"^card\d+$", c)]
+
+    def _absent(self, key):
+        got = self._cards("drm" if key == "drm_cards" else "sound")
+        return not got, f"{key}: {got or 'none'}"
+
+    def _console_order(self):
+        consoles = [t for t in self.obs["cmdline"].split() if t.startswith("console=")]
+        if not consoles:
+            return False, "no console= token at all"
+        dev = consoles[-1].partition("console=")[2].split(",")[0]
+        aliases = self.obs.get("dt_aliases", {})
+        resolved = aliases.get(dev, dev)
+        uart = resolved.startswith("ttyAMA") or resolved.startswith("ttyS")
+        return uart, f"last console= is {consoles[-1]} (-> {resolved})"
+
+    def _subvols(self):
+        seen = {m["subvol_root"].lstrip("/") for m in self.obs["mounts"]
+                if m["fstype"] == "btrfs"}
+        missing = [s for s in SUBVOLS if s not in seen]
+        return not missing, "all seven mounted" if not missing else f"missing {missing}"
+
+    def _data_mount(self):
+        want = self.expect.get("data_mount")
+        if not want:
+            return None, "no DATA_MOUNT known for this role"
+        m = self.mounts.get(want)
+        if not m:
+            return False, f"{want} is not a mount point at all"
+        ok = m["subvol_root"].endswith("@data")
+        return ok, f"{want} <- {m['subvol_root']}"
+
+    def _usr_ro(self):
+        m = self.mounts.get("/usr")
+        if not m:
+            return False, "/usr is not a separate mount"
+        ro = "ro" in m["vfs_options"].split(",")
+        return ro, f"/usr {m['vfs_options']}"
+
+    def _nodatacow(self):
+        bad, unknown = [], []
+        for path, attrs in self.obs["nodatacow"].items():
+            if attrs == "unknown":
+                unknown.append(path)
+            elif not attrs or "C" not in attrs:
+                bad.append(path)
+        if unknown and not bad:
+            return None, f"could not read {unknown} (run the probe with sudo)"
+        return not bad, "both +C" if not bad else f"missing +C on {bad}"
+
+    def _boot_firmware(self):
+        m = self.mounts.get("/boot/firmware")
+        if not m:
+            return False, "not mounted"
+        rw = "rw" in m["vfs_options"].split(",")
+        return rw and m["fstype"] == "vfat", f"{m['fstype']} {m['vfs_options']}"
+
+    def _sudoers(self):
+        s = self.obs["sudoers_nopasswd"]
+        if s.get("present") == "unknown":
+            return None, "could not stat it (run the probe with sudo)"
+        ok = s.get("present") and s.get("mode") == "0o440" and s.get("uid") == 0
+        return ok, f"{s}"
+
+    def _partuuid(self):
+        root = [t for t in self.obs["cmdline"].split() if t.startswith("root=PARTUUID=")]
+        if not root:
+            return None, "no root=PARTUUID= on the command line"
+        uuid = root[0].split("=", 2)[2]
+        return uuid.startswith(DISK_ID), f"root={uuid}"
+
+    def _grew(self):
+        sizes = self.obs.get("block", {}).get("sizes_512b", {})
+        disk = next((n for n in sizes if re.match(r"^(mmcblk\d+|nvme\d+n\d+)$", n)), None)
+        if not disk:
+            return None, "no whole-disk device found"
+        part = f"{disk}p2"
+        if part not in sizes:
+            return None, f"{part} not found"
+        used = sizes[part] / sizes[disk]
+        return used > 0.90, (f"p2 is {sizes[part] * 512 // 2**30} GiB of "
+                             f"{sizes[disk] * 512 // 2**30} GiB ({used:.0%})")
+
+
+def render(rows, obs):
+    width = max(len(r[1]) for r in rows)
+    order = {FAIL: 0, UNKNOWN: 1, SKIP: 2, PASS: 3}
+    for status, name, why, detail in sorted(rows, key=lambda r: (order[r[0]], r[1])):
+        print(f"{status:<8} {name:<{width}}  {detail}")
+        if status in (FAIL, UNKNOWN):
+            print(f"{'':<8} {'':<{width}}  why it matters: {why}")
+    fails = sum(1 for r in rows if r[0] == FAIL)
+    unknowns = sum(1 for r in rows if r[0] == UNKNOWN)
+    print(f"\n{len(rows) - fails - unknowns} pass, {fails} fail, {unknowns} unknown")
+    if obs.get("euid", 0) != 0:
+        print("NOTE: probe ran unprivileged; re-run it with sudo to resolve UNKNOWNs.")
+    return 1 if fails else 0
 
 
 def main(argv):
     if len(argv) != 2:
-        print(__doc__.strip().splitlines()[0], file=sys.stderr)
         print(f"usage: {os.path.basename(argv[0])} <host.json>", file=sys.stderr)
         return 2
-
     obs = json.load(open(argv[1]))
-    rep = Report()
-    role = obs["fleet_image"]["keys"].get("FLEET_ROLE")
-    if not role:
-        print("no FLEET_ROLE in /etc/fleet-image; cannot pick a role", file=sys.stderr)
+    checks = Checks(obs)
+    if checks.role not in ROLE_EXPECT:
+        print(f"unknown role {checks.role!r}; add it to ROLE_EXPECT", file=sys.stderr)
         return 2
-
-    revision = obs["fleet_image"]["keys"].get("ORG_OPENCONTAINERS_IMAGE_REVISION")
-    sources = Sources(revision)
-    env = parse_env_text(sources.read(f"pi-image/roles/{role}.env"))
-    purge, masked_units = build_constants(sources)
-    aliases = obs.get("dt_aliases", {})
-    unpriv = obs.get("euid", 0) != 0
-    config_txt = obs["config_txt"]
-    cmdline = obs["cmdline"].split()
-
-    print(f"# {obs['hostname']} ({obs['model']}) role={role} kernel={obs['kernel']}")
-    print(f"# image {obs['fleet_image']['keys'].get('FLEET_IMAGE')}")
-    print(f"# claims read from {sources.describe()}")
-    print()
-
-    # -- the manifest, which is how the image under test identifies itself ------
-    src = "build-image.sh write_manifest(), PIPELINE.md 'three formats at once'"
-    if obs["fleet_image"].get("parses_toml") and obs["fleet_image"].get("shell_safe"):
-        rep.ok("manifest/formats", "parses as TOML and is shell-safe", src)
-    else:
-        rep.bad("manifest/formats",
-                f"toml={obs['fleet_image'].get('parses_toml')} "
-                f"shell_safe={obs['fleet_image'].get('shell_safe')}", src)
-
-    # -- CONFIG_APPEND: every declared line present, and its effect visible -----
-    append_path = env.get("CONFIG_APPEND")
-    directives = []
-    if append_path:
-        src = append_path
-        for line in (sources.read(f"pi-image/{append_path}") or "").splitlines():
-            line = line.strip()
-            if not line or line.startswith("#") or line.startswith("["):
-                continue
-            directives.append(line)
-            if line in config_txt:
-                rep.ok(f"config.txt/{line}", "present in the running config.txt", src)
-            else:
-                rep.bad(f"config.txt/{line}", "NOT in the running config.txt", src)
-
-        nodes = obs["device_nodes"]
-        for pattern, key, predicate, want in DT_EFFECTS:
-            for line in directives:
-                if not re.match(pattern, line):
-                    continue
-                got = nodes.get(key) or []
-                if predicate(got):
-                    rep.ok(f"effect/{line}", f"{want}: {got}", src)
-                else:
-                    rep.bad(f"effect/{line}", f"expected {want}, found {got}", src)
-
-        # cma-N is the one directive with a number to check rather than a node.
-        for line in directives:
-            m = re.match(r"^dtoverlay=cma,cma-(\d+)", line)
-            if m:
-                want_kb = int(m.group(1)) * 1024
-                got_kb = obs.get("cma_total_kb")
-                if got_kb == want_kb:
-                    rep.ok(f"effect/{line}", f"CmaTotal is {got_kb} kB", src)
-                else:
-                    rep.bad(f"effect/{line}",
-                            f"CmaTotal is {got_kb} kB, expected {want_kb}", src)
-
-    # -- CONFIG_REMOVE: vendor line commented out, and its effect gone ---------
-    src = f"roles/{role}.env CONFIG_REMOVE"
-    for pattern in env.get("CONFIG_REMOVE", "").split():
-        live = [
-            ln.strip()
-            for ln in config_txt.splitlines()
-            if ln.strip() and not ln.strip().startswith("#")
-            and fnmatch.fnmatch(ln.strip(), pattern)
-        ]
-        if live:
-            rep.bad(f"config-remove/{pattern}", f"still active: {live}", src)
-        else:
-            rep.ok(f"config-remove/{pattern}", "no active line matches", src)
-
-        # The two removals with an observable consequence on this fleet.
-        if pattern.startswith("dtoverlay=vc4-kms-v3d"):
-            got = cards(obs["device_nodes"]["drm"])
-            (rep.ok if not got else rep.bad)(
-                "effect/no-vc4", f"DRM cards: {got or 'none'}", src)
-        if pattern.startswith("dtparam=audio=on"):
-            got = cards(obs["device_nodes"]["sound"])
-            (rep.ok if not got else rep.bad)(
-                "effect/no-audio", f"sound cards: {got or 'none'}", src)
-
-    # -- kernel command line ---------------------------------------------------
-    src = f"roles/{role}.env CMDLINE_REMOVE/CMDLINE_APPEND"
-    for pattern in env.get("CMDLINE_REMOVE", "").split():
-        hits = [t for t in cmdline if fnmatch.fnmatch(t, pattern)]
-        # An appended token may legitimately re-add what was removed (campod
-        # moves the serial console to the END so /dev/console is the UART).
-        appended = env.get("CMDLINE_APPEND", "").split()
-        hits = [t for t in hits if t not in appended]
-        (rep.ok if not hits else rep.bad)(
-            f"cmdline-remove/{pattern}",
-            "no unexpected token matches" if not hits else f"still present: {hits}", src)
-    for token in env.get("CMDLINE_APPEND", "").split():
-        hit = any(console_matches(t, token, aliases) for t in cmdline) \
-            if token.startswith("console=") else token in cmdline
-        (rep.ok if hit else rep.bad)(
-            f"cmdline-append/{token}",
-            "present (alias-resolved)" if hit else "missing", src)
-    if env.get("CMDLINE_APPEND"):
-        last = env["CMDLINE_APPEND"].split()[-1]
-        consoles = [t for t in cmdline if t.startswith("console=")]
-        if consoles and last.startswith("console="):
-            good = console_matches(consoles[-1], last, aliases)
-            (rep.ok if good else rep.bad)(
-                "cmdline/console-order",
-                f"last console= is {consoles[-1]}"
-                + ("" if good else f", expected {last}"),
-                f"roles/{role}.env -- /dev/console is the LAST console=")
-
-    # -- module blacklist ------------------------------------------------------
-    src = f"roles/{role}.env MODULE_BLACKLIST"
-    for mod in env.get("MODULE_BLACKLIST", "").split():
-        loaded = mod in obs["modules_loaded"]
-        (rep.bad if loaded else rep.ok)(
-            f"blacklist/{mod}", "LOADED" if loaded else "not loaded", src)
-
-    # -- the subvolume graph ---------------------------------------------------
-    src = "assemble-btrfs.sh"
-    by_target = {m["target"]: m for m in obs["mounts"]}
-    seen = {
-        m["subvol_root"].lstrip("/"): m
-        for m in obs["mounts"] if m["fstype"] == "btrfs"
-    }
-    for sv in SUBVOLS:
-        name = sv.lstrip("@") or "@"
-        key = sv.lstrip("/")
-        present = any(k == sv.lstrip("/") or k == sv[1:] or f"@{k}" == sv for k in seen)
-        (rep.ok if present else rep.bad)(
-            f"subvol/{sv}", "mounted" if present else "NOT mounted", src)
-
-    data_mount = env.get("DATA_MOUNT")
-    if data_mount:
-        m = by_target.get(data_mount)
-        src = f"roles/{role}.env DATA_MOUNT (lockstep with the coordinator repo)"
-        if m and m["subvol_root"].endswith("@data"):
-            rep.ok("subvol/@data-location", f"@data is at {data_mount}", src)
-        else:
-            rep.bad("subvol/@data-location",
-                    f"{data_mount} is {m['subvol_root'] if m else 'not a mount'}, "
-                    "so captures land on @var", src)
-
-    usr = by_target.get("/usr")
-    src = "assemble-btrfs.sh fstab (/usr ... ro) -- contested, coordinator#202"
-    if usr:
-        ro = "ro" in usr["vfs_options"].split(",")
-        (rep.ok if ro else rep.bad)(
-            "mount/usr-ro", f"/usr options: {usr['vfs_options']}", src)
-
-    # -- nodatacow, which cannot be a mount option -----------------------------
-    src = "assemble-btrfs.sh chattr +C (btrfs(5): not settable per-subvolume)"
-    for path, attrs in obs["nodatacow"].items():
-        if attrs == "unknown":
-            rep.unknown(f"nodatacow/{path}",
-                        "probe could not read it (run the probe with sudo)", src)
-        elif attrs is None:
-            rep.bad(f"nodatacow/{path}", "path does not exist", src)
-        else:
-            (rep.ok if "C" in attrs else rep.bad)(
-                f"nodatacow/{path}", f"lsattr: {attrs}", src)
-
-    # -- the purge, in both directions -----------------------------------------
-    installed = set(obs["packages_installed"])
-    src = "build-image.sh PURGE (coordinator#316)"
-    for pkg in purge:
-        (rep.bad if pkg in installed else rep.ok)(
-            f"purged/{pkg}", "STILL INSTALLED" if pkg in installed else "absent", src)
-    src = "PIPELINE.md 'apt-get purge cascades' -- absence check is not enough"
-    for pkg in PURGE_SURVIVORS:
-        (rep.ok if pkg in installed else rep.bad)(
-            f"survived/{pkg}",
-            "present" if pkg in installed else "MISSING -- a dependency took it", src)
-
-    # -- scheduled maintenance, swap, sudo -------------------------------------
-    src = "build-image.sh systemctl mask (coordinator#282)"
-    for unit in masked_units:
-        state = obs["unit_states"].get(unit, "absent")
-        (rep.ok if state in ("masked", "absent") else rep.bad)(
-            f"masked/{unit}", state, src)
-
-    src = "build-image.sh install_no_swap() (rpi-swap Mechanism=none)"
-    active = [ln for ln in obs["swaps"][1:] if ln.strip()]
-    (rep.ok if not active else rep.bad)(
-        "no-swap", "no swap active" if not active else f"swap active: {active}", src)
-
-    src = "build-image.sh install_sudoers() -- 0440, root-owned, visudo-checked"
-    s = obs["sudoers_nopasswd"]
-    if s.get("present") == "unknown":
-        rep.unknown("sudoers/010_pi-nopasswd",
-                    "probe could not stat it (run the probe with sudo)", src)
-    elif s.get("present") and s.get("mode") == "0o440" and s.get("uid") == 0:
-        rep.ok("sudoers/010_pi-nopasswd", "present, 0440, root-owned", src)
-    else:
-        rep.bad("sudoers/010_pi-nopasswd", f"{s}", src)
-
-    if unpriv:
-        print("NOTE: probe ran unprivileged; some claims are UNKNOWN rather than"
-              " checked. Re-run with `sudo python3 -`.\n")
-    return rep.render()
+    keys = obs["fleet_image"]["keys"]
+    print(f"# {obs['hostname']} ({obs['model']}) role={checks.role}")
+    print(f"# image {keys.get('FLEET_IMAGE')} built from "
+          f"{keys.get('ORG_OPENCONTAINERS_IMAGE_REVISION', '?')[:10]}")
+    print(f"# kernel {obs['kernel']}\n")
+    return render(checks.run(), obs)
 
 
 if __name__ == "__main__":
