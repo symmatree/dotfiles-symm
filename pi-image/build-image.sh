@@ -319,7 +319,12 @@ write_manifest() {
 	img="$(basename "$OUT_IMG")"
 	base="$(basename "$RPIOS_URL")"
 	rev="${GITHUB_SHA:-$(git -C "$HERE" rev-parse HEAD 2>/dev/null || echo unknown)}"
-	ref="${GITHUB_REF_NAME:-$(git -C "$HERE" rev-parse --abbrev-ref HEAD 2>/dev/null || echo unknown)}"
+	# Fully qualified -- refs/heads/main, refs/tags/v1.2.3 -- so nothing downstream has
+	# to guess whether a bare name is a branch or a tag, or whether a release tag carries
+	# a `v` its version does not. GITHUB_REF is already this; symbolic-ref is the local
+	# equivalent and is empty on a detached HEAD, which `unknown` then covers.
+	ref="${GITHUB_REF:-$(git -C "$HERE" symbolic-ref -q HEAD 2>/dev/null || echo unknown)}"
+	[ -n "$ref" ] || ref=unknown
 
 	# A browsable URL, because the UI links it. Actions gives it directly;
 	# otherwise derive it from the remote, which may be SSH form.
@@ -340,7 +345,7 @@ write_manifest() {
 		# way: no spaces around =, values always quoted, no \$ in a value.
 		ORG_OPENCONTAINERS_IMAGE_SOURCE="$source"
 		ORG_OPENCONTAINERS_IMAGE_REVISION="$rev"
-		ORG_OPENCONTAINERS_IMAGE_REF_NAME="$ref"
+		FLEET_SOURCE_REF="$ref"
 		FLEET_ROLE="$ROLE"
 		FLEET_IMAGE="$img"
 		FLEET_BASE="$base"
@@ -375,7 +380,7 @@ write_manifest() {
 		Type=oneshot
 		RemainAfterExit=yes
 		EnvironmentFile=/etc/fleet-image
-		ExecStart=/bin/echo "fleet-image: ${FLEET_IMAGE} role=${FLEET_ROLE} ref=${ORG_OPENCONTAINERS_IMAGE_REF_NAME} revision=${ORG_OPENCONTAINERS_IMAGE_REVISION} base=${FLEET_BASE}"
+		ExecStart=/bin/echo "fleet-image: ${FLEET_IMAGE} role=${FLEET_ROLE} ref=${FLEET_SOURCE_REF} revision=${ORG_OPENCONTAINERS_IMAGE_REVISION} base=${FLEET_BASE}"
 
 		[Install]
 		WantedBy=multi-user.target
