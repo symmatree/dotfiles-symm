@@ -481,6 +481,36 @@ install_flasher_boot() {
 }
 
 # =============================================================================
+# 2f-bis. per-role module blacklist
+#     A driver we do not want running should not be running -- not because of
+#     the memory, but because an appliance in flight should execute nothing it
+#     does not need.
+#
+#     This has to be in the IMAGE rather than applied later by ansible. The
+#     initramfs carries MODULES=most (see step 3) and udev coldplugs from it, so
+#     by the time the rootfs is up the modules are already loaded. modprobe.d is
+#     copied into the initramfs at build time, so blacklisting here catches both.
+#     Applying it on a running device would instead mean regenerating the
+#     initramfs, which writes /boot/firmware.
+# =============================================================================
+install_module_blacklist() {
+	[ -n "${MODULE_BLACKLIST:-}" ] || return 0
+	echo "== blacklist modules ($ROLE) =="
+	mkdir -p "$ROOTFS/etc/modprobe.d"
+	{
+		echo "# Written by dotfiles-symm pi-image/build-image.sh for role $ROLE."
+		echo "# Baked in before update-initramfs so it applies to coldplug too."
+		for m in $MODULE_BLACKLIST; do
+			# blacklist stops alias-based autoload; install /bin/false stops an
+			# explicit modprobe as well, including one from inside the initramfs.
+			echo "blacklist $m"
+			echo "install $m /bin/false"
+		done
+	} >"$ROOTFS/etc/modprobe.d/$ROLE-blacklist.conf"
+	cat "$ROOTFS/etc/modprobe.d/$ROLE-blacklist.conf"
+}
+
+# =============================================================================
 # 2g. no swap. An appliance that cannot fit in its RAM should fail visibly, and
 #     rpi-swap's default writeback file lands on the SD card. swap.conf(5).
 # =============================================================================
@@ -896,6 +926,7 @@ main() {
 	install_grow_rootfs
 	write_manifest
 	install_sudoers
+	install_module_blacklist
 	install_no_swap
 	regenerate_initramfs
 	install_flasher_boot
