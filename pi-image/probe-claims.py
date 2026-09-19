@@ -160,6 +160,13 @@ def device_nodes():
         "drm": sorted(os.path.basename(p) for p in glob.glob("/sys/class/drm/*")),
         "sound": sorted(os.path.basename(p) for p in glob.glob("/proc/asound/card*")),
         "video": sorted(glob.glob("/dev/video*")),
+        # The BUS existing and the /dev node existing are different layers. The
+        # device tree (image) brings up the bus; i2c-dev (ansible, via
+        # modules-load.d) creates the character device. Without both
+        # observations a missing /dev/i2c-* cannot be attributed to a layer --
+        # which is the exact confusion behind coordinator#248.
+        "i2c_buses": sorted(os.path.basename(p)
+                            for p in glob.glob("/sys/bus/i2c/devices/*")),
     }
 
 
