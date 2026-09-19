@@ -1,5 +1,9 @@
 # pi-image -- btrfs SD image build (coordinator + fleet)
 
+> **New here?** [PIPELINE.md](PIPELINE.md) describes how a git push becomes a card in a Pi,
+> which decisions belong to the image versus to ansible, and the traps that have cost cards.
+> This file is the build mechanics.
+
 The versioned, repeatable image-build pipeline for the power-loss-tolerant **btrfs subvolume** SD
 layout (coordinator [#96](https://github.com/symmatree/coordinator/issues/96) / #41). It produces a
 flashable `.img` per device role, carrying the subvolume layout a stock Raspberry Pi Imager flash
