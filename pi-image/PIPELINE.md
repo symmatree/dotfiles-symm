@@ -80,7 +80,9 @@ running device.
 - **Fleet-wide system facts** that should hold however a card was personalised: passwordless
   sudo, swap off, scheduled-maintenance timers masked, packages purged.
 - **`/etc/fleet-image`** — the manifest, in the shared vocabulary (coordinator#326).
-- **The flasher** — `initramfs-flash.gz`, `tryboot.txt`, `cmdline-flash.txt` on p1.
+- **The flasher** — `initramfs-flash.gz`, `tryboot.txt`, `cmdline-flash.txt` on p1. The
+  tryboot door into it does not open on a Zero 2 W; the partition selector does.
+  [BOOT-SELECTION.md](BOOT-SELECTION.md) has the measurements and the replacement design.
 
 ### Provisioning owns (flash time, per unit)
 
@@ -151,3 +153,9 @@ exercise each one, and what each outcome means live in
 down in the tracker rather than by editing this file.
 
 Read it before assuming something here works because it is in the image.
+
+The first item on that list has been run: **tryboot does not work on the Zero 2 W**, the
+firmware stores the flag and ignores it, and the failure is not ours —
+[BOOT-SELECTION.md](BOOT-SELECTION.md). The partition selector on the same board is
+honoured, which is both the way in for the flasher and the route to rewriting p1 and p2
+in one pass.

@@ -1,7 +1,14 @@
 #!/bin/busybox sh
 #
-# /init of the flasher initramfs. PID 1 of a RAM-only system, reached only by
-# `reboot '0 tryboot'`. Installed into initramfs-flash.gz by build-image.sh.
+# /init of the flasher initramfs. PID 1 of a RAM-only system, intended to be
+# reached by `reboot '0 tryboot'`. Installed into initramfs-flash.gz by
+# build-image.sh.
+#
+# NOT CURRENTLY REACHABLE ON THE ZERO 2 W: that board's firmware stores the
+# tryboot flag and does not act on it, so tryboot.txt is never read (measured
+# 2026-09-19, see BOOT-SELECTION.md). The code below is unexercised on hardware
+# for that reason, not because it is known broken. The partition selector is the
+# way in that does work on this silicon.
 #
 # It re-images p2 from an image staged on p1 (coordinator#312). Nothing pivots to
 # a real root, so nothing holds p2 open and it can be rewritten underneath.
