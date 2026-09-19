@@ -240,19 +240,6 @@ def main(argv):
                 got = nodes.get(key) or []
                 if predicate(got):
                     rep.ok(f"effect/{line}", f"{want}: {got}", src)
-                    continue
-                # An absent /dev node does not by itself implicate the image.
-                # dtparam=i2c_arm=on brings up the CONTROLLER -- an adapter under
-                # /sys/bus/i2c/devices. The character device comes from i2c-dev,
-                # which ansible loads via modules-load.d. Bus present but no node
-                # means the image did its half and the converge has not run.
-                buses = nodes.get("i2c_buses") or []
-                if key == "i2c" and buses:
-                    rep.bad(
-                        f"effect/{line}",
-                        f"no /dev/i2c-*, but the bus IS up ({buses}) -- the image's "
-                        "half worked; i2c-dev is ansible's (coordinator#246/#331)",
-                        src + " -- effect completed by host/ansible, not the image")
                 else:
                     rep.bad(f"effect/{line}", f"expected {want}, found {got}", src)
 
