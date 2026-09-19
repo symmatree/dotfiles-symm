@@ -132,6 +132,29 @@ staging a re-flash image — is the case that rule protects, not the case it for
 sourceable shell, and a systemd `EnvironmentFile`. No whitespace around `=`, values always
 double-quoted, no `$` in a value. The build parses it both ways after writing it.
 
+## Checking that a card's claims actually took effect
+
+The image's customisations are fragile relative to the OS under them, and a minor
+version bump can break one silently — a directive present in `config.txt` with no device
+behind it looks exactly like one that worked. Two scripts answer "did the patches apply",
+which is a different question from "is this box healthy":
+
+```bash
+ssh pi@<host> sudo python3 - < pi-image/probe-claims.py > /tmp/<host>.json
+pi-image/check-claims.py /tmp/<host>.json
+```
+
+`probe-claims.py` runs on the device and emits observations as JSON — no expectations, no
+judgement, so it never needs updating when a role changes (coordinator#326 R5: the device
+prints its map and compares nothing). `check-claims.py` runs here and compares that against
+`roles/<role>.env`, `config.append.txt` and `build-image.sh` **at the revision
+`/etc/fleet-image` says the image was built from** — not the working tree, or every card
+fails each claim added since it was flashed.
+
+Run it before a suite bump and after, and diff. `UNKNOWN` is a real outcome and never
+counts as a failure: an unprivileged probe cannot stat inside `/etc/sudoers.d`, and
+reporting that as "absent" would be a check that lies.
+
 ## Testing without hardware
 
 Most of this is checkable offline, and the habit is worth keeping.
