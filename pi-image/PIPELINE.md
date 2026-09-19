@@ -132,28 +132,42 @@ staging a re-flash image — is the case that rule protects, not the case it for
 sourceable shell, and a systemd `EnvironmentFile`. No whitespace around `=`, values always
 double-quoted, no `$` in a value. The build parses it both ways after writing it.
 
-## Checking that a card's claims actually took effect
+## The integration test for this code
 
-The image's customisations are fragile relative to the OS under them, and a minor
-version bump can break one silently — a directive present in `config.txt` with no device
-behind it looks exactly like one that worked. Two scripts answer "did the patches apply",
-which is a different question from "is this box healthy":
+The image's customisations are fragile relative to the OS under them, and most of them
+work by dropping a file somewhere that some *other* tool is supposed to notice. When one
+stops being noticed, nothing reports it: a directive sits in `config.txt` with no device
+behind it, a blacklist never reaches the initramfs, `@data` mounts somewhere captures are
+not written. The failures are remote and silent, which is the whole reason for a check.
 
 ```bash
-ssh pi@<host> sudo python3 - < pi-image/probe-claims.py > /tmp/<host>.json
-pi-image/check-claims.py /tmp/<host>.json
+pi-image/run-claims-check.sh campod-se           # probe + check, one step
+pi-image/run-claims-check.sh pi@10.0.5.237 -i ~/.ssh/key
 ```
 
-`probe-claims.py` runs on the device and emits observations as JSON — no expectations, no
-judgement, so it never needs updating when a role changes (coordinator#326 R5: the device
-prints its map and compares nothing). `check-claims.py` runs here and compares that against
-`roles/<role>.env`, `config.append.txt` and `build-image.sh` **at the revision
-`/etc/fleet-image` says the image was built from** — not the working tree, or every card
-fails each claim added since it was flashed.
+Run it after changing something you are worried about. The probe is piped over SSH and
+read from stdin — nothing is installed on the device, nothing is written, and the JSON is
+kept so two runs can be diffed, which is the point before and after a suite bump.
 
-Run it before a suite bump and after, and diff. `UNKNOWN` is a real outcome and never
-counts as a failure: an unprivileged probe cannot stat inside `/etc/sudoers.d`, and
-reporting that as "absent" would be a check that lies.
+**It is sentinels, not a golden copy.** One purged package proves the purge ran; restating
+the whole list proves nothing about the mechanism and turns every deliberate edit into a
+failure. What earns a check is a mechanism that is fragile, or that depends on two things
+agreeing, and whose failure is silent. Test until fear turns into boredom, then stop.
+
+**Expectations live in `check-claims.py`, written down independently** — not read out of
+`build-image.sh`. A test that derives its expectations from the code under test cannot
+fail when that code is wrong: drop half of `PURGE` and a checker that greps `PURGE` still
+passes. When the build changes and the expectations do not, the run fails and a person
+decides whether the change was intended. That is the signal, the same as any unit test.
+
+Two consequences worth knowing when reading a report. A card older than a claim will fail
+it — that is "this card predates this expectation", and the image's gitsha is in the
+header so you can see it. And `UNKNOWN` never counts as a failure: an unprivileged probe
+cannot stat inside `/etc/sudoers.d`, and reporting that as "absent" would be a check that
+lies.
+
+Ideally this would run on merge against a VM or a spare Pi with automated flashing. That
+does not exist yet, so it is run by hand.
 
 ## Testing without hardware
 

@@ -211,6 +211,31 @@ def dt_aliases():
     return out
 
 
+def block_devices():
+    """Sizes and PARTUUIDs, for the two mechanisms that fail silently.
+
+    grow-rootfs expands p2 to fill the card on every boot; if it stops working
+    the card simply stays the size it was built, and nothing says so until it
+    fills. And the fixed MBR disk identifier (0xc0dec0de) is what makes PARTUUIDs
+    identical across cards -- the vendor's own first-boot resize randomises it,
+    which is why the build strips that token.
+    """
+    out = {"sizes_512b": {}, "partuuid": {}}
+    for path in sorted(glob.glob("/sys/class/block/mmcblk*")
+                       + glob.glob("/sys/class/block/nvme*")):
+        name = os.path.basename(path)
+        raw = read(os.path.join(path, "size"))
+        if raw and raw is not UNKNOWN:
+            out["sizes_512b"][name] = int(raw.strip())
+    for link in glob.glob("/dev/disk/by-partuuid/*"):
+        try:
+            out["partuuid"][os.path.basename(os.path.realpath(link))] = \
+                os.path.basename(link)
+        except OSError:
+            pass
+    return out
+
+
 def firmware_boot_state():
     """What the firmware says it did -- the channel that settled the tryboot question.
 
@@ -252,6 +277,7 @@ def main():
         "nodatacow": nodatacow(),
         "cma_total_kb": int(cma.group(1)) if cma else None,
         "dt_aliases": dt_aliases(),
+        "block": block_devices(),
         "cmdline_txt": read("/boot/firmware/cmdline.txt", ""),
         "firmware_boot_state": firmware_boot_state(),
         "boot_files": sorted(
