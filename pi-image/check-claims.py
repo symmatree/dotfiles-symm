@@ -42,8 +42,12 @@ PURGE_SURVIVORS = ["raspi-config", "raspberrypi-sys-mods", "userconf-pi", "rfkil
 
 # A config.txt directive is only real if something appeared. Left: a regex over
 # the directive as written in config.append.txt. Right: the observation key and
-# what it has to show. Adding a directive to a role without adding it here makes
-# the checker say so, rather than silently skipping it.
+# what it has to show.
+#
+# KNOWN GAP: a directive with no entry here still gets its presence checked, but
+# nothing checks its effect, and the run says nothing about the omission. So
+# coverage degrades silently as roles gain hardware. Adding the directive here is
+# the fix; noticing that it is missing is currently a human's job.
 DT_EFFECTS = [
     (r"^enable_uart=1", "tty", lambda v: any("ttyAMA" in x for x in v),
      "a PL011/mini-UART tty"),
