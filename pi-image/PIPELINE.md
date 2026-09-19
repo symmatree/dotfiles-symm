@@ -4,6 +4,11 @@ Orientation for whoever owns the disk image next. This is **where things are and
 not an argument for the design. [README.md](README.md) is the build mechanics; this is the
 shape around it, and the layer boundaries you will otherwise rediscover by breaking them.
 
+The management layer above this -- how config gets deployed and stays deployed once the card
+is in the Pi -- is
+[`coordinator/docs/deployment-model.md`](https://github.com/symmatree/coordinator/blob/main/docs/deployment-model.md).
+This doc ends where that one starts.
+
 ## The pipeline
 
 ```
@@ -140,10 +145,9 @@ Most of this is checkable offline, and the habit is worth keeping.
 
 ## What has never been exercised
 
-- **tryboot on a Zero 2 W.** The flasher is built into every image and has never been booted.
-  `reboot '0 tryboot'` with nothing staged reports and reboots; the result lands in
-  `/boot/firmware/flash/result.txt`.
-- **The flasher writing p2.** It does the real `unzip | dd` and has never run.
-- **`cma-128` against a real camera.** The figure is derived from picamera2's buffer
-  configuration, not measured. `/sys/kernel/debug/dma_buf/bufinfo` during capture settles it.
-- **The USB gadget network.** Both halves are written; no link has been brought up.
+Parts of this ship on every card and have never run on hardware. What they are, how to
+exercise each one, and what each outcome means live in
+[coordinator#339](https://github.com/symmatree/coordinator/issues/339), so the list burns
+down in the tracker rather than by editing this file.
+
+Read it before assuming something here works because it is in the image.
