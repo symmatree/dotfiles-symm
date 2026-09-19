@@ -43,13 +43,10 @@ knobs"). `build-image.sh <role>` sources `roles/<role>.env`:
 The subvolumes (`@ @usr @var @home @data @scratch @snapshots`), ro-`/usr`, and the
 btrfs-in-initramfs regen are **identical across roles**.
 
-> [!NOTE]
-> ⚠️ **`ro`-`/usr` is not actually enforced as built** — the fstab (`/usr … ro`) and the assembly are
-> correct, but at boot `/usr` comes up `rw`: `@usr` shares the root btrfs *superblock*, so when
-> `systemd-remount-fs` remounts `/` rw the read-only flag on `/usr` is dropped, and a live `/usr` can't
-> be remounted `ro` ("busy"). Tracked as an open design question in coordinator
-> [#96](https://github.com/symmatree/coordinator/issues/96); full evidence in
-> `facts/topics/power-unstable-pi.md` → "Reality check".
+`ro`-`/usr` holds on the units running this image: `findmnt /usr` reports `ro` and writes are
+refused. A converge remounts it `rw` to run `apt` and cannot put it back while the system is
+running, so a box that has been converged since its last boot reads `rw` until it reboots --
+which is the last step of a converge. That is the mechanism, not a defect.
 
 Add a role by dropping a
 new `roles/<name>.env` and adding it to the matrix in `build-pi-image.yaml`.
@@ -59,7 +56,7 @@ new `roles/<name>.env` and adding it to the matrix in `build-pi-image.yaml`.
 | file | what | status |
 |------|------|--------|
 | `assemble-btrfs.sh` | lay a populated rootfs into the layout: `mkfs.btrfs -m single`, create `@ @usr @var @home @data @scratch @snapshots`, populate each from the right rootfs slice, `chattr +C` docker + `@scratch` (nodatacow cannot be a per-subvolume mount option), write `/etc/fstab` + emit the cmdline fragment | **done, verified** |
-| `test-assemble.sh` | local proof: dummy rootfs -> loopback image -> assemble -> mount per the generated fstab -> assert (all seven subvols, exclusive split, `ro`-`/usr` + `remount,rw` *of the assembled fstab* — note the **booted** `/usr` comes up `rw`, see [#96](https://github.com/symmatree/coordinator/issues/96), `@data` nesting under `/var`, docker + `@scratch` `+C`). Needs a btrfs-capable kernel + `sudo`. | done |
+| `test-assemble.sh` | local proof: dummy rootfs -> loopback image -> assemble -> mount per the generated fstab -> assert (all seven subvols, exclusive split, `ro`-`/usr` + `remount,rw` *of the assembled fstab*, `@data` nesting under `/var`, docker + `@scratch` `+C`). Needs a btrfs-capable kernel + `sudo`. | done |
 | `verify-in-vm.sh` | run `test-assemble.sh` inside a throwaway KVM guest -- for hosts whose kernel lacks btrfs (e.g. the Talos notebook host). | done |
 | `build-image.sh` | **convert path.** Download+verify the pinned official RPi OS Lite Trixie arm64 image, extract its rootfs + boot partition, natively chroot the arm64 rootfs to regenerate the initramfs **with btrfs**, build a fresh MBR image (FAT `bootfs` p1 + btrfs p2 via `assemble-btrfs.sh`), write the image manifest, fix up `cmdline.txt`/`config.txt`. arm64 + btrfs kernel only (CI: `ubuntu-24.04-arm`). | **boots on hardware** |
 | `provision/` | per-unit identity at flash time -- cloud-init `user-data` template + `Flash-Card.ps1`. FAT-partition only, so the flashing host needs no btrfs/WSL. | done |
@@ -84,8 +81,6 @@ There is no automated boot test, and `-M virt` qemu is not the way to add one --
 downstream kernel does not initialise virtio on that synthetic platform, so no root disk appears.
 If a gate is ever wanted, `raspi4b`-machine qemu is the direction.
 
-The read-only `/usr` pillar is enforced on both SD units as of 2026-09-12 (`ro` in the mount
-options, writes refused), which contradicts coordinator#202 -- see that issue.
 
 ## Flash it
 
