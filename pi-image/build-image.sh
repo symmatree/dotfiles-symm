@@ -574,16 +574,17 @@ regenerate_initramfs() {
 	#   MAPPED into other processes rather than started:
 	#     libnss-mdns   an NSS module, loaded by anything that resolves a name.
 	#
-	# NOT removed, because they never met the criterion and one of them was load
-	# bearing: alsa-utils, man-db and bluez-firmware are disk, not things that
-	# load. alsa-utils in particular cannot be purged at all --
+	# ALSA-UTILS IS NOT HERE, and it is the one exclusion that is not a choice:
 	#
 	#   raspi-config          Depends: ... alsa-utils ...
 	#   raspberrypi-sys-mods  Depends: raspi-config
 	#                         Recommends: rfkill, userconf-pi
 	#
-	# -- so taking it drags out raspi-config, raspberrypi-sys-mods, userconf-pi and
-	# raspberrypi-net-mods, which is provisioning and the radio. It cost a card.
+	# Purging it drags out raspi-config, raspberrypi-sys-mods, userconf-pi and
+	# raspberrypi-net-mods -- provisioning and the radio. It cost a card. Removing
+	# it means first removing the dependence on raspi-config, which user-data's
+	# runcmd uses for do_wifi_country. Guard 2 below fails the build rather than
+	# letting that recur.
 	#
 	# NOT removed:
 	#   console-setup, keyboard-configuration  these DO start at boot and would
@@ -603,7 +604,10 @@ regenerate_initramfs() {
 		export DEBIAN_FRONTEND=noninteractive
 		apt-get update -qq
 		apt-get install -y -qq btrfs-progs busybox-static
-		PURGE="avahi-daemon libnss-mdns bluez udisks2 cron"
+		# The list, per coordinator#316. Anything not here is either already absent
+		# from this base or blocked by a dependency, both recorded in the comment
+		# above -- not filtered out by preference.
+		PURGE="avahi-daemon libnss-mdns bluez bluez-firmware udisks2 cron man-db console-setup console-setup-linux keyboard-configuration"
 
 		# GUARD 1: protect what we need from a later autoremove, rather than relying
 		# on nobody running one. The mark travels with the image, so it also covers

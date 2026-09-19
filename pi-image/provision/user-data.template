@@ -27,9 +27,11 @@ hostname: __HOSTNAME__
 manage_etc_hosts: true
 
 timezone: __TIMEZONE__
-keyboard:
-  model: pc105
-  layout: "__KEYMAP__"
+
+# No keyboard: stanza. cc_keyboard drives console-setup and
+# keyboard-configuration, which the image purges -- a headless unit whose only
+# console is a serial line has no keymap to set. KEYMAP stays in fleet.env,
+# unused, so a role that does have a keyboard can put this back.
 
 # SINGULAR `user:`, not plural `users:`. The singular form is merged OVER the
 # distro default_user from /etc/cloud/cloud.cfg, so the account keeps the group
