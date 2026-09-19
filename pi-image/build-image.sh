@@ -422,9 +422,17 @@ install_sudoers() {
 #     running: an initramfs whose /init never pivots to a real root. The whole
 #     system lives in RAM and nothing holds p2 open.
 #
-#     Selected by TRYBOOT. `reboot '0 tryboot'` boots tryboot.txt instead of
-#     config.txt EXACTLY ONCE; if the board does not come up, a power cycle falls
-#     back to config.txt. The rollback for the boot step is the firmware's.
+#     Selected by TRYBOOT -- WHICH DOES NOT WORK ON THE ZERO 2 W. The intent was
+#     that `reboot '0 tryboot'` boots tryboot.txt instead of config.txt EXACTLY
+#     ONCE, with the firmware owning the rollback. Measured 2026-09-19 on
+#     campod-se: the firmware accepts and stores the tryboot flag and then
+#     ignores it, so tryboot.txt is never read and this path is unreachable on
+#     that hardware. Setting the flag by hand reproduces it with our code out of
+#     the loop, so it is not a defect here. The partition selector (`reboot '<N>'`)
+#     IS honoured on the same silicon and is the mechanism to move to.
+#     See BOOT-SELECTION.md for the evidence and the replacement design.
+#
+#     What follows still builds correctly; it is simply not selectable yet.
 #
 #     IT DOES THE REAL WRITE -- see flasher-init.sh, which is its /init. The
 #     guards are on the inputs rather than on the action, and a fresh card with
