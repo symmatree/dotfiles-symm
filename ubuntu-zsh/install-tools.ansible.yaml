@@ -402,6 +402,10 @@
           - jsonnet-bundler
           - talosctl
           - tanka
+          # uv/uvx. MCP servers are launched by `uvx <server>` from ~/.mcp.json,
+          # so without it on PATH those servers silently fail to start. See
+          # symmatree/tiles#805.
+          - uv
           # mikefarah yq v4 (Go). NOT apt: apt's `yq` is python-yq (jq wrapper),
           # which JSON-quotes strings and breaks tiles' ci-tools/helm-add-repos.sh
           # (`helm repo add` -> "invalid chart URL format"). See dotfiles-symm#10.
