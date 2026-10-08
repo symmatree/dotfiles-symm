@@ -114,9 +114,17 @@ dtoverlay=cma,cma-128
 # consequence rather than a guess: with cut-down firmware there is no codec
 # behind that module. The two changes are coupled, not independent.
 #
-# Alpine packages this firmware as raspberrypi-bootloader-cutdown, so it is a
-# configuration other distributions ship rather than an exotic one, and nothing
-# in it is flagged as camera-affecting.
+# What that firmware IS, from the firmware-files documentation rather than the
+# config-option note:
+#
+#   "start_cd.elf -- a cut-down version of the firmware that removes support for
+#    hardware blocks such as codecs and 3D as well as debug logging support. It
+#    also imposes initial frame buffer limitations."
+#
+# "hardware blocks such as" is an open list, so this does not say whether the ISP
+# is among them. Alpine packages the same firmware as
+# raspberrypi-bootloader-cutdown, so it is a configuration other distributions
+# ship and consume rather than an exotic one, with no camera caveat attached.
 #
 # If capture does break, bcm2835_isp is bound to bcm2835_mmal_vchiq -- the ISP is
 # reached through MMAL over the VideoCore mailbox -- so the firmware-side half of
