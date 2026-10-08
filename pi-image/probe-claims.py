@@ -269,7 +269,12 @@ def firmware_boot_state():
 
 
 def main():
-    cma = re.search(r"^CmaTotal:\s+(\d+) kB", read("/proc/meminfo") or "", re.M)
+    meminfo = read("/proc/meminfo") or ""
+    cma = re.search(r"^CmaTotal:\s+(\d+) kB", meminfo, re.M)
+    # MemTotal is what the kernel was LEFT after the firmware took its split, so
+    # it is the only on-device reading of whether gpu_mem took effect. CmaTotal
+    # is a separate reservation INSIDE MemTotal and the two must not be conflated.
+    memtotal = re.search(r"^MemTotal:\s+(\d+) kB", meminfo, re.M)
     root_dev = read("/proc/cmdline") or ""
 
     doc = {
@@ -292,6 +297,7 @@ def main():
         "device_nodes": device_nodes(),
         "nodatacow": nodatacow(),
         "cma_total_kb": int(cma.group(1)) if cma else None,
+        "mem_total_kb": int(memtotal.group(1)) if memtotal else None,
         "dt_aliases": dt_aliases(),
         "block": block_devices(),
         "cmdline_txt": read("/boot/firmware/cmdline.txt", ""),
