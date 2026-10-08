@@ -114,6 +114,29 @@ dtoverlay=cma,cma-128
 # consequence rather than a guess: with cut-down firmware there is no codec
 # behind that module. The two changes are coupled, not independent.
 #
+# Alpine packages this firmware as raspberrypi-bootloader-cutdown, so it is a
+# configuration other distributions ship rather than an exotic one, and nothing
+# in it is flagged as camera-affecting.
+#
+# If capture does break, bcm2835_isp is bound to bcm2835_mmal_vchiq -- the ISP is
+# reached through MMAL over the VideoCore mailbox -- so the firmware-side half of
+# the camera path is the first place to look. That is where to start, not a
+# reason to hesitate: the check is #316's, capture works at full sensor
+# resolution, and a config.txt line on a mounted FAT partition is one edit and a
+# reboot to back out.
+gpu_mem=16. The cut-down firmware removes support
+#    for codecs, 3D and debug logging as well as limiting the initial early-boot
+#    framebuffer to 1080p @16bpp [...]"
+#
+# Codecs, 3D and an early-boot framebuffer are all things this role has already
+# given up by other means: vc4-kms-v3d is removed, drm is blacklisted, there is
+# no display, and nothing here encodes video. So the losses line up with the
+# role rather than being a price paid for the memory.
+#
+# It also makes the bcm2835_codec entry in campod.env's MODULE_BLACKLIST a
+# consequence rather than a guess: with cut-down firmware there is no codec
+# behind that module. The two changes are coupled, not independent.
+#
 # WHAT WOULD DISPROVE IT, and it is one specific thing. bcm2835_isp is bound to
 # bcm2835_mmal_vchiq -- the ISP is reached through MMAL over the VideoCore
 # mailbox -- and vc_sm_cma shares memory between ARM and VideoCore. If the ISP's
