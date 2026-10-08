@@ -34,7 +34,7 @@ ROLES = {
     "campod": dict(data="/var/lib/campod", cma=131072, nodes=["spidev", "udc"],
                    absent=["drm", "sound"], uart_console=True,
                    blacklist=["drm", "snd_bcm2835", "bcm2835_v4l2", "bcm2835_codec"],
-                   psi=True, mem_total_floor_kb=460000),
+                   psi=True, mem_total_floor_kb=440000),
     "coordinator": dict(data="/var/lib/coordinator", cma=None, nodes=["i2c_buses"],
                         absent=[], uart_console=False, blacklist=[]),
     "pocketterm": dict(data="/var/lib/store", cma=None, nodes=[], absent=[],
@@ -159,7 +159,8 @@ def _(o):
 @check("config.txt/gpu-split",
        "gpu_mem is withheld from the kernel by the firmware before boot, so a "
        "directive that did not take leaves the memory gone with nothing in "
-       "userspace saying so", needs="mem_total_floor_kb")
+       "userspace saying so. The floor sits between the 64 MiB default's "
+       "424728 kB and gpu_mem=32's measured 457432 kB", needs="mem_total_floor_kb")
 def _(o):
     got = o.doc.get("mem_total_kb")
     if got is None:
