@@ -211,6 +211,22 @@ def dt_aliases():
     return out
 
 
+def pressure():
+    """Pressure stall accounting, which exists only if psi=1 reached the cmdline.
+
+    The Pi kernel is built CONFIG_PSI=y with CONFIG_PSI_DEFAULT_DISABLED=y, so
+    the feature is compiled in and inert until the token appears -- and the
+    directory is ABSENT rather than empty when it did not. A cmdline token that
+    silently failed to land is the whole failure this reports: the stall metrics
+    would simply never appear and nothing else would say why.
+    """
+    out = {}
+    for name in ("cpu", "io", "memory"):
+        raw = read("/proc/pressure/" + name)
+        out[name] = raw.strip() if isinstance(raw, str) and raw is not UNKNOWN else raw
+    return out
+
+
 def block_devices():
     """Sizes and PARTUUIDs, for the two mechanisms that fail silently.
 
@@ -279,6 +295,7 @@ def main():
         "dt_aliases": dt_aliases(),
         "block": block_devices(),
         "cmdline_txt": read("/boot/firmware/cmdline.txt", ""),
+        "pressure": pressure(),
         "firmware_boot_state": firmware_boot_state(),
         "boot_files": sorted(
             os.path.basename(p) for p in glob.glob("/boot/firmware/*")
