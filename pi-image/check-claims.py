@@ -33,7 +33,7 @@ PASS, FAIL, UNKNOWN = "PASS", "FAIL", "UNKNOWN"
 ROLES = {
     "campod": dict(data="/var/lib/campod", cma=131072, nodes=["spidev", "udc"],
                    absent=["drm", "sound"], uart_console=True,
-                   blacklist=["drm", "snd_bcm2835"]),
+                   blacklist=["drm", "snd_bcm2835"], psi=True),
     "coordinator": dict(data="/var/lib/coordinator", cma=None, nodes=["i2c_buses"],
                         absent=[], uart_console=False, blacklist=[]),
     "pocketterm": dict(data="/var/lib/store", cma=None, nodes=[], absent=[],
@@ -140,6 +140,19 @@ def _(o):
     dev = consoles[-1].partition("console=")[2].split(",")[0]
     resolved = o.doc.get("dt_aliases", {}).get(dev, dev)
     return resolved.startswith(("ttyAMA", "ttyS")), f"{consoles[-1]} -> {resolved}"
+
+
+@check("cmdline/psi",
+       "psi=1 is a cmdline token and the kernel ships PSI compiled in but "
+       "disabled, so a dropped token leaves /proc/pressure absent and every "
+       "stall metric silently missing", needs="psi")
+def _(o):
+    if "psi=1" not in o.cmdline:
+        return False, "psi=1 is not on the kernel command line"
+    p = o.doc.get("pressure") or {}
+    missing = [k for k in ("cpu", "io", "memory") if not p.get(k)]
+    return not missing, ("cpu/io/memory all present" if not missing
+                         else f"psi=1 is set but /proc/pressure/{missing} absent")
 
 
 @check("subvols/graph", "a subvolume that fails to mount leaves its mountpoint "
