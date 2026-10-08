@@ -79,82 +79,46 @@ dtparam=spi=on
 # message. The check is that capture works at full sensor resolution.
 dtoverlay=cma,cma-128
 
-# GPU/CPU memory split. 64 MiB was never chosen -- it is the firmware's default
-# for a board with less than 1 GB, and on this role it is 64 MiB withheld from a
-# device that has no display, no vc4-kms-v3d, drm blacklisted, no cards in
-# /sys/class/drm and "no soundcards" in /proc/asound.
+# GPU/CPU memory split. 64 MiB was never chosen on this role -- it is the
+# firmware default for a board under 1 GB -- and this device has no display, no
+# vc4-kms-v3d, drm blacklisted, no cards in /sys/class/drm and "no soundcards"
+# in /proc/asound.
 #
-# 16 is the documented minimum. Raspberry Pi's config.txt documentation, on the
-# question that decides it:
+# 32 IS THE SMALLEST USABLE VALUE ON THIS BOARD, and that was established by
+# measurement after 16 broke the camera. campod-se, one variable at a time:
 #
-#   "The camera stack (libcamera) on Raspberry Pi OS uses Linux CMA memory to
-#    allocate buffers instead of GPU memory, so there is no benefit in
-#    increasing the GPU memory size."
+#   set   reported   firmware   VCHI        ISP nodes   camera
+#   16    gpu=16M    start_cd   fails -22   absent      rpicam refuses
+#   17    gpu=16M    start_cd   fails -22   absent      rpicam refuses
+#   24    gpu=16M    start_cd   fails -22   absent      rpicam refuses
+#   32    gpu=32M    full       ok          video13-16  enumerates 4608x2592
+#   64    gpu=64M    full       ok          present     works
 #
-# So the camera's buffers come from the CMA region set above, not from here.
-# Measured on campod-se, MemTotal was 424728 kB with gpu=64M; this should return
-# roughly 48 MiB to the ARM, against 161.9 MiB of page cache which is the only
-# reclaimable memory on the board (coordinator#434).
+# TWO THINGS THAT COST A BREAKAGE TO LEARN, neither of them documented.
 #
-# 16 IS NOT JUST A SMALLER SPLIT. It is the only value that selects the cut-down
-# firmware, and the same documentation is explicit about what that gives up:
+# The firmware rounds gpu_mem DOWN TO A MULTIPLE OF 16. 17 and 24 both report
+# gpu=16M. The documentation says the cut-down firmware is selected by
+# "gpu_mem=16", which reads as an exact match; in practice anything that rounds
+# to 16 selects it. There is no published granularity and start.elf is closed.
 #
-#   "Cut-down firmware (start*cd.elf and fixup*cd.dat) cannot be selected this
-#    way - the system will fail to boot. The only way to enable the cut-down
-#    firmware is to specify gpu_mem=16. The cut-down firmware removes support
-#    for codecs, 3D and debug logging as well as limiting the initial early-boot
-#    framebuffer to 1080p @16bpp [...]"
+# The cut-down firmware is incompatible with this camera. It is not a size
+# problem. start_cd does not provide the VideoCore services the ISP rides on:
 #
-# Codecs, 3D and an early-boot framebuffer are all things this role has already
-# given up by other means: vc4-kms-v3d is removed, drm is blacklisted, there is
-# no display, and nothing here encodes video. So the losses line up with the
-# role rather than being a price paid for the memory.
+#   vc_sm_cma_vchi_init: failed to open VCHI service (-22)
+#   bcm2835_mmal_vchiq: Failed to open VCHI service connection (status=-22)
 #
-# It also makes the bcm2835_codec entry in campod.env's MODULE_BLACKLIST a
-# consequence rather than a guess: with cut-down firmware there is no codec
-# behind that module. The two changes are coupled, not independent.
+# bcm2835_isp then creates no device nodes -- /dev/video13..16 are simply absent
+# -- and libcamera's vc4 pipeline drives the ISP through exactly that path. The
+# sensor is fine throughout (imx708 probes, module ID 0x0302, over I2C) and so is
+# Unicam, which is what makes this fail as "camera will not start" rather than as
+# anything that names memory.
 #
-# What that firmware IS, from the firmware-files documentation rather than the
-# config-option note:
+# So the 16 MiB that only the cut-down firmware offers is not available to us at
+# any price, and 32 returns 31.9 MiB -- MemTotal 424728 -> 457432 kB -- against
+# 161.9 MiB of page cache, which is the only reclaimable memory on this board
+# (coordinator#434, coordinator#447).
 #
-#   "start_cd.elf -- a cut-down version of the firmware that removes support for
-#    hardware blocks such as codecs and 3D as well as debug logging support. It
-#    also imposes initial frame buffer limitations."
-#
-# "hardware blocks such as" is an open list, so this does not say whether the ISP
-# is among them. Alpine packages the same firmware as
-# raspberrypi-bootloader-cutdown, so it is a configuration other distributions
-# ship and consume rather than an exotic one, with no camera caveat attached.
-#
-# If capture does break, bcm2835_isp is bound to bcm2835_mmal_vchiq -- the ISP is
-# reached through MMAL over the VideoCore mailbox -- so the firmware-side half of
-# the camera path is the first place to look. That is where to start, not a
-# reason to hesitate: the check is #316's, capture works at full sensor
-# resolution, and a config.txt line on a mounted FAT partition is one edit and a
-# reboot to back out.
-gpu_mem=16. The cut-down firmware removes support
-#    for codecs, 3D and debug logging as well as limiting the initial early-boot
-#    framebuffer to 1080p @16bpp [...]"
-#
-# Codecs, 3D and an early-boot framebuffer are all things this role has already
-# given up by other means: vc4-kms-v3d is removed, drm is blacklisted, there is
-# no display, and nothing here encodes video. So the losses line up with the
-# role rather than being a price paid for the memory.
-#
-# It also makes the bcm2835_codec entry in campod.env's MODULE_BLACKLIST a
-# consequence rather than a guess: with cut-down firmware there is no codec
-# behind that module. The two changes are coupled, not independent.
-#
-# WHAT WOULD DISPROVE IT, and it is one specific thing. bcm2835_isp is bound to
-# bcm2835_mmal_vchiq -- the ISP is reached through MMAL over the VideoCore
-# mailbox -- and vc_sm_cma shares memory between ARM and VideoCore. If the ISP's
-# firmware-side half is part of what "codecs" drops, the camera stops working.
-# The documentation does not say either way, and buffers coming from CMA does
-# not answer it, because firmware-side processing is not a buffer.
-#
-# So the check is #316's and it is load-bearing here: capture works at full
-# sensor resolution. A too-small reservation, or a missing firmware component,
-# fails inside libcamera and presents as a camera that will not start rather
-# than as an out-of-memory message. config.txt is an ordinary file on a mounted
-# FAT partition, so backing this out costs one edit and a reboot, not a reflash.
-gpu_mem=16
+# The check remains #316's: capture works at full sensor resolution. A value that
+# is too small, or a missing firmware component, fails inside libcamera and
+# presents as a camera that will not start.
+gpu_mem=32
