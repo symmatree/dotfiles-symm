@@ -33,7 +33,8 @@ PASS, FAIL, UNKNOWN = "PASS", "FAIL", "UNKNOWN"
 ROLES = {
     "campod": dict(data="/var/lib/campod", cma=131072, nodes=["spidev", "udc"],
                    absent=["drm", "sound"], uart_console=True,
-                   blacklist=["drm", "snd_bcm2835"], psi=True),
+                   blacklist=["drm", "snd_bcm2835", "bcm2835_v4l2", "bcm2835_codec"],
+                   psi=True, mem_total_floor_kb=460000),
     "coordinator": dict(data="/var/lib/coordinator", cma=None, nodes=["i2c_buses"],
                         absent=[], uart_console=False, blacklist=[]),
     "pocketterm": dict(data="/var/lib/store", cma=None, nodes=[], absent=[],
@@ -153,6 +154,19 @@ def _(o):
     missing = [k for k in ("cpu", "io", "memory") if not p.get(k)]
     return not missing, ("cpu/io/memory all present" if not missing
                          else f"psi=1 is set but /proc/pressure/{missing} absent")
+
+
+@check("config.txt/gpu-split",
+       "gpu_mem is withheld from the kernel by the firmware before boot, so a "
+       "directive that did not take leaves the memory gone with nothing in "
+       "userspace saying so", needs="mem_total_floor_kb")
+def _(o):
+    got = o.doc.get("mem_total_kb")
+    if got is None:
+        return None, "no MemTotal in the probe"
+    want = o.expect["mem_total_floor_kb"]
+    return got > want, (f"MemTotal {got} kB, floor {want} "
+                        f"({'gpu_mem reduced' if got > want else 'looks like the 64 MiB default'})")
 
 
 @check("subvols/graph", "a subvolume that fails to mount leaves its mountpoint "
