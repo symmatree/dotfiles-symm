@@ -61,6 +61,14 @@ METADATA="${METADATA:-single}"
 # build during sourcing.
 CMDLINE_REMOVE="${CMDLINE_REMOVE:-}"
 CMDLINE_APPEND="${CMDLINE_APPEND:-}"
+# Packages the converge would otherwise install on every freshly flashed card.
+# Space-separated, installed in the chroot with --no-install-recommends so the
+# image and a converge agree on the resulting set -- host/ansible installs these
+# with install_recommends: false, and letting recommends in here would make a
+# baked card differ from a converged one in ways nobody would look for.
+#
+# Empty for a role that does not converge against host/ansible.
+APT_INSTALL="${APT_INSTALL:-}"
 export DATA_MOUNT METADATA # consumed by assemble-btrfs.sh
 
 DL="$BUILD/$(basename "$RPIOS_URL")"
@@ -638,10 +646,27 @@ regenerate_initramfs() {
 	#
 	# Not -qq: the log should show what came out.
 	# A heredoc rather than -c '...', so the script can contain single quotes.
-	chroot "$ROOTFS" /bin/bash -euo pipefail -s <<'CHROOT'
+	# -s with an argument: the heredoc below is QUOTED, so $PURGE and friends are
+	# expanded by the chroot's shell and not by this one. The role's package list
+	# therefore has to arrive as a positional parameter rather than inline.
+	chroot "$ROOTFS" /bin/bash -euo pipefail -s "$APT_INSTALL" <<'CHROOT'
 		export DEBIAN_FRONTEND=noninteractive
 		apt-get update -qq
 		apt-get install -y -qq btrfs-progs busybox-static
+
+		# The role's converge packages, if it has any. --no-install-recommends to
+		# match host/ansible's install_recommends: false, so a baked card and a
+		# converged one end up with the same set.
+		#
+		# Unquoted on purpose: the list is space-separated words, which is what
+		# apt-get wants. Installed BEFORE the purge below, so the purge simulation
+		# sees them -- if anything here ever depends on a package in PURGE, that
+		# guard fails the build rather than quietly removing something needed.
+		if [ -n "${1:-}" ]; then
+			echo "== installing the role's converge packages: $1 =="
+			# shellcheck disable=SC2086  # word-splitting the package list is intended
+			apt-get install -y -qq --no-install-recommends $1
+		fi
 		# The list, per coordinator#316. Anything not here is either already absent
 		# from this base or blocked by a dependency, both recorded in the comment
 		# above -- not filtered out by preference.
