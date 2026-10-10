@@ -34,9 +34,11 @@ ROLES = {
     "campod": dict(data="/var/lib/campod", cma=131072, nodes=["spidev", "udc"],
                    absent=["drm", "sound"], uart_console=True,
                    blacklist=["drm", "snd_bcm2835", "bcm2835_v4l2", "bcm2835_codec"],
-                   psi=True, mem_total_floor_kb=440000),
+                   psi=True, mem_total_floor_kb=440000,
+                   preinstalled=["podman", "collectd-core"]),
     "coordinator": dict(data="/var/lib/coordinator", cma=None, nodes=["i2c_buses"],
-                        absent=[], uart_console=False, blacklist=[]),
+                        absent=[], uart_console=False, blacklist=[],
+                        preinstalled=["podman", "collectd-core", "i2c-tools"]),
     "pocketterm": dict(data="/var/lib/store", cma=None, nodes=[], absent=[],
                        uart_console=False, blacklist=[]),
 }
@@ -168,6 +170,15 @@ def _(o):
     want = o.expect["mem_total_floor_kb"]
     return got > want, (f"MemTotal {got} kB, floor {want} "
                         f"({'gpu_mem reduced' if got > want else 'looks like the 64 MiB default'})")
+
+
+@check("packages/preinstalled",
+       "the converge installs these too, so a build that dropped them is "
+       "invisible until ansible stops doing it -- at which point the stack "
+       "simply has no podman", needs="preinstalled")
+def _(o):
+    missing = [p for p in o.expect["preinstalled"] if p not in o.packages]
+    return not missing, ("all present" if not missing else f"MISSING {missing}")
 
 
 @check("subvols/graph", "a subvolume that fails to mount leaves its mountpoint "

@@ -61,6 +61,9 @@ METADATA="${METADATA:-single}"
 # build during sourcing.
 CMDLINE_REMOVE="${CMDLINE_REMOVE:-}"
 CMDLINE_APPEND="${CMDLINE_APPEND:-}"
+# Space-separated packages to install into the rootfs. Installed with
+# --no-install-recommends, so the resulting set is exactly the list.
+APT_INSTALL="${APT_INSTALL:-}"
 export DATA_MOUNT METADATA # consumed by assemble-btrfs.sh
 
 DL="$BUILD/$(basename "$RPIOS_URL")"
@@ -638,10 +641,21 @@ regenerate_initramfs() {
 	#
 	# Not -qq: the log should show what came out.
 	# A heredoc rather than -c '...', so the script can contain single quotes.
-	chroot "$ROOTFS" /bin/bash -euo pipefail -s <<'CHROOT'
+	# The heredoc is quoted, so $PURGE and the rest expand in the chroot's shell
+	# rather than this one -- which is why the package list arrives via -s as $1
+	# instead of being interpolated.
+	chroot "$ROOTFS" /bin/bash -euo pipefail -s "$APT_INSTALL" <<'CHROOT'
 		export DEBIAN_FRONTEND=noninteractive
 		apt-get update -qq
 		apt-get install -y -qq btrfs-progs busybox-static
+
+		# Before the purge below, so the purge simulation covers these too: a
+		# package here that depends on something in PURGE fails the build.
+		if [ -n "${1:-}" ]; then
+			echo "== installing the role's converge packages: $1 =="
+			# shellcheck disable=SC2086  # word-splitting the package list is intended
+			apt-get install -y -qq --no-install-recommends $1
+		fi
 		# The list, per coordinator#316. Anything not here is either already absent
 		# from this base or blocked by a dependency, both recorded in the comment
 		# above -- not filtered out by preference.
