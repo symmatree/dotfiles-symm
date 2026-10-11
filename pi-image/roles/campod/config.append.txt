@@ -111,3 +111,23 @@ dtoverlay=cma,cma-128
 # is too small, or a missing firmware component, fails inside libcamera and
 # presents as a camera that will not start.
 gpu_mem=32
+
+# PPS input: this pod's buffered 1 Hz leg from the distribution board, on BCM
+# GPIO24 = header pin 18 (docs/rekon10/central-hub.md; the campod harness block
+# in docs/campod-software.md lists that position as spare). Gives /dev/pps0 for
+# chrony, which takes the fraction of a second from here and the integer second
+# from the coordinator over the gadget network -- coordinator#370.
+#
+# The SAME pin and the same line as the coordinator role. A pod has no SPI
+# connection to the DS3234 and gets no RTC from it: the only thing arriving here
+# is one buffered copy of the shared edge, which is what makes pods share phase
+# by construction rather than by agreement.
+#
+# No assert_falling_edge, matching the coordinator. Which edge to time on is open
+# on coordinator#11 -- the falling edge is the actively driven one, the rising
+# edge is the pull-up's RC -- and it is a config.txt directive on both roles, so
+# whenever that is settled it moves on both together.
+#
+# Harmless before a pod's leg is fitted: pps-gpio on an unconnected pin presents
+# /dev/pps0 and no pulses, which is a quiet device rather than an error.
+dtoverlay=pps-gpio,gpiopin=24

@@ -31,7 +31,8 @@ PASS, FAIL, UNKNOWN = "PASS", "FAIL", "UNKNOWN"
 
 # Per-role expectations. Only what the checks below need.
 ROLES = {
-    "campod": dict(data="/var/lib/campod", cma=131072, nodes=["spidev", "udc"],
+    "campod": dict(data="/var/lib/campod", cma=131072,
+                   nodes=["spidev", "udc", "pps"],
                    absent=["drm", "sound"], uart_console=True,
                    blacklist=["drm", "snd_bcm2835", "bcm2835_v4l2", "bcm2835_codec"],
                    psi=True, mem_total_floor_kb=440000,
