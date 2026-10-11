@@ -35,6 +35,18 @@ dtparam=spi=on
 # PPS input: the buffered 1 Hz from the distribution board, on BCM GPIO24 =
 # header pin 18 (docs/rekon10/central-hub.md). Gives /dev/pps0 for chrony.
 #
+# assert_falling_edge=1 because the FALLING edge is the top of the second, and
+# pps-gpio defaults to the rising one. DS3234 datasheet p11: the countdown chain
+# resets when the seconds register is written, and "the 1Hz square-wave output,
+# if enabled, transitions high 500ms after the seconds data transfer" -- so the
+# output is high from +0.5 to +1.0 and the rising edge sits on the HALF second.
+# The falling edge is also the only driven one: INT/SQW is open-drain, so the
+# fall is the chip pulling down and the rise is the pull-up's RC.
+#
+# Measured on this board before the parameter was added: ppstest reported every
+# event as an assert, i.e. the half second, 500 ms from the second it was about
+# to be labelled with.
+#
 # Harmless before the board is fitted -- pps-gpio on an unconnected pin presents
 # /dev/pps0 and no pulses, which is a quiet device rather than an error.
-dtoverlay=pps-gpio,gpiopin=24
+dtoverlay=pps-gpio,gpiopin=24,assert_falling_edge=1
