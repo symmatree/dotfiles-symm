@@ -17,3 +17,24 @@ dtoverlay=disable-bt
 # (coordinator#115, #110). A SEPARATE bus from the FC's I2C compass, so the
 # display cannot repeat the contention that dropped it. Enables /dev/i2c-1.
 dtparam=i2c_arm=on
+
+# SPI, for the DS3234 RTC on the PPS distribution board (coordinator#11). CE0 is
+# its chip select; dtparam=spi=on brings up spi0 and both spidev children, so
+# /dev/spidev0.0 and 0.1 appear (bcm2711-rpi-4-b.dts declares spidev@0 and
+# spidev@1 under &spi0; bcm270x-rpi.dtsi defines the param as the controller's
+# status).
+#
+# NOT dtoverlay=spi-rtc,ds3234. That binds rtc-ds3232, whose probe sets INTCN and
+# so switches the DS3234's INT/SQW pin from square wave to alarm output -- it
+# turns the 1 Hz off as part of coming up -- and its fragment@100 disables the
+# spidev node for that chip select, removing the /dev/spidev0.0 we configure the
+# chip through. So the coordinator drives the RTC over spidev and writes the
+# control register itself.
+dtparam=spi=on
+
+# PPS input: the buffered 1 Hz from the distribution board, on BCM GPIO24 =
+# header pin 18 (docs/rekon10/central-hub.md). Gives /dev/pps0 for chrony.
+#
+# Harmless before the board is fitted -- pps-gpio on an unconnected pin presents
+# /dev/pps0 and no pulses, which is a quiet device rather than an error.
+dtoverlay=pps-gpio,gpiopin=24

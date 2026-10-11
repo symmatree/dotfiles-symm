@@ -155,6 +155,7 @@ def device_nodes():
         "tty": sorted(glob.glob("/dev/ttyAMA*") + glob.glob("/dev/ttyS*")),
         "serial_symlinks": sorted(glob.glob("/dev/serial*")),
         "spidev": sorted(glob.glob("/dev/spidev*")),
+        "pps": sorted(glob.glob("/dev/pps*")),
         "i2c": sorted(glob.glob("/dev/i2c-*")),
         "udc": sorted(os.path.basename(p) for p in glob.glob("/sys/class/udc/*")),
         "drm": sorted(os.path.basename(p) for p in glob.glob("/sys/class/drm/*")),
