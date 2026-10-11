@@ -54,29 +54,18 @@ dtoverlay=dwc2,dr_mode=peripheral
 # Inert with nothing on the bus, so a campod without a sensor pays nothing.
 dtparam=spi=on
 
-# CMA. This line is REQUIRED by the vc4-kms-v3d removal in campod.env, not
-# merely paired with it: that overlay is what device tree uses to set CMA, and
-# the kernel's own default is CONFIG_CMA_SIZE_MBYTES=5. Remove the overlay
-# without this and CMA is 5MB, under the camera's ~48 MiB, and capture stops.
+# CMA. REQUIRED by the vc4-kms-v3d removal in campod.env rather than merely
+# paired with it: that overlay is what sets CMA from device tree, and the kernel
+# default is CONFIG_CMA_SIZE_MBYTES=5. Remove the overlay without this line and
+# the camera has 5MB to allocate from.
 #
-# The overlays README warns that this overlay "might clash with other overlays
-# like vc4-fkms-v3d and vc4-kms-v3d" -- which is precisely why it only appears
-# on a role that removes vc4-kms-v3d.
+# 128MB because the overlays README gates cma-256 on 1GB of RAM and this board
+# has 512MB. No performance claim attaches to the size.
 #
-# 128MB against a measured requirement of ~48 MiB. capture.py runs
-# create_still_configuration at sensor resolution with CAMPOD_CAPTURE_WIDTH and
-# HEIGHT unset, which in picamera2 means buffer_count=1, a BGR888 main stream and
-# a raw stream at the same size. For the IMX708 at 4608x2592 that is 34.2 MiB of
-# main plus 14.2 MiB of raw, plus small ISP statistics buffers.
-#
-# The number is tied to that configuration, not to the camera: a video
-# configuration defaults to six buffers, which at this resolution would want
-# ~290 MiB and fits in none of these values. If CAMPOD_CAPTURE_WIDTH/HEIGHT or
-# the configuration type changes, redo the arithmetic.
-#
-# A too-small reservation fails inside libcamera's buffer allocation, which
-# presents as a camera that will not start rather than as an out-of-memory
-# message. The check is that capture works at full sensor resolution.
+# The camera's actual requirement is measured in coordinator#316 and #339, and a
+# too-small reservation presents as a camera that will not start rather than as
+# an out-of-memory message -- so the check is that capture works at full sensor
+# resolution.
 dtoverlay=cma,cma-128
 
 # GPU/CPU memory split. 64 MiB was never chosen on this role -- it is the
@@ -84,8 +73,8 @@ dtoverlay=cma,cma-128
 # vc4-kms-v3d, drm blacklisted, no cards in /sys/class/drm and "no soundcards"
 # in /proc/asound.
 #
-# 32 IS THE SMALLEST USABLE VALUE ON THIS BOARD, and that was established by
-# measurement after 16 broke the camera. campod-se, one variable at a time:
+# 32 is the smallest usable value on this board. Measured on campod-se, one
+# variable at a time:
 #
 #   set   reported   firmware   VCHI        ISP nodes   camera
 #   16    gpu=16M    start_cd   fails -22   absent      rpicam refuses
