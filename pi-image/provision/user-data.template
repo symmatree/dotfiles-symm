@@ -50,7 +50,7 @@ user:
   #
   # It has to be this one rather than an operator's. Convergence is how everything
   # else reaches a device, and you cannot converge without a key already present
-  # (coordinator#77): a card seeded with only a human's key is a card the fleet
+  # (#77, this repo): a card seeded with only a human's key is a card the fleet
   # service cannot touch until a person SSHes in and appends one by hand, which is
   # what happened to campod-se and then the coordinator.
   #
