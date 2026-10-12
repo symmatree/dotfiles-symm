@@ -45,8 +45,26 @@ user:
   shell: /bin/bash
   lock_passwd: false
   passwd: "__PW_HASH__"
+  # THE FLEET MANAGEMENT KEY, and only that -- this is a bootstrap credential, not
+  # the set of keys the device ends up trusting.
+  #
+  # It has to be this one rather than an operator's. Convergence is how everything
+  # else reaches a device, and you cannot converge without a key already present
+  # (coordinator#77): a card seeded with only a human's key is a card the fleet
+  # service cannot touch until a person SSHes in and appends one by hand, which is
+  # what happened to campod-se and then the coordinator.
+  #
+  # Seeding the fleet key instead inverts that: the service can reach a card from
+  # first boot, so which *humans* are trusted becomes something a converge installs
+  # from version control rather than a value maintained on the flashing machine.
+  # That is the whole reason the seed is one key and not two.
+  #
+  # Rotation stays a `terraform apply` plus a converge rather than a reflash, as
+  # tiles tf/nodes/fleet-ssh-key.tf intends -- the new key is pushed over the old
+  # one, which is still here. This seed is only ever the way in for the first
+  # converge of a given card.
   ssh_authorized_keys:
-    - "__SSH_PUBKEY__"
+    - "__FLEET_PUBKEY__"
 
 # Key-only. The password hash above exists for the serial console, not for sshd.
 ssh_pwauth: false
