@@ -125,7 +125,7 @@ python3 - <<'EOF'
 import yaml, re
 s = open('pi-image/provision/user-data.template').read()
 for k, v in {'HOSTNAME':'x','TIMEZONE':'UTC','KEYMAP':'us','USERNAME':'pi','PW_HASH':'$y$x$y',
-             'SSH_PUBKEY':'ssh-ed25519 AAAA x','WIFI_SSID':'s','WIFI_PSK':'p','WIFI_COUNTRY':'US'}.items():
+             'FLEET_PUBKEY':'ssh-ed25519 AAAA x','WIFI_SSID':'s','WIFI_PSK':'p','WIFI_COUNTRY':'US'}.items():
     s = s.replace(f'__{k}__', v)
 assert not re.findall(r'__[A-Z_]+__', s), 'unsubstituted placeholder'
 d = yaml.safe_load(s)
