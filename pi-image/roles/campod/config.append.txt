@@ -113,15 +113,27 @@ dtoverlay=cma,cma-128
 gpu_mem=32
 
 # PPS input: this pod's buffered 1 Hz leg from the distribution board, on BCM
-# GPIO24 = header pin 18 (docs/rekon10/central-hub.md; the campod harness block
-# in docs/campod-software.md lists that position as spare). Gives /dev/pps0 for
-# chrony, which takes the fraction of a second from here and the integer second
-# from the coordinator over the gadget network -- coordinator#370.
+# GPIO26 = header pin 37, with pin 39 as its signal ground (coordinator#493,
+# docs/campod.md). Gives /dev/pps0 for chrony, which takes the fraction of a
+# second from here and the integer second from the coordinator over the gadget
+# network -- coordinator#370.
 #
-# The SAME pin and the same line as the coordinator role. A pod has no SPI
-# connection to the DS3234 and gets no RTC from it: the only thing arriving here
-# is one buffered copy of the shared edge, which is what makes pods share phase
-# by construction rather than by agreement.
+# A 1x2 in the odd row at the far end of the header, chosen for mechanical
+# clearance rather than electrically: it keeps away from the accelerometer's 2x5
+# at header pins 17-26 and the serial console at 6/8/10, so none of the three
+# connectors can foul another. Header pins 9/11 were the other candidate and are
+# out -- they sit alongside the console plug.
+#
+# NOT the coordinator's pin, which is GPIO24 on header 18. There the signal
+# arrives as one line of a 2x4 that also carries SPI and power for the DS3234; a
+# pod has no SPI connection to the chip and takes only the buffered edge, so the
+# two roles differ in pin and agree in edge. That one buffered copy of a single
+# SQW line is what makes pods share phase by construction rather than by
+# agreement.
+#
+# Header position and BCM number are different numbering schemes and both appear
+# above: header 37 is BCM 26, while header 26 is BCM 7 -- CE1, the arm-end
+# accelerometer's chip select.
 #
 # assert_falling_edge=1, the same as the coordinator and for the same reason: the
 # falling edge is the top of the second and pps-gpio defaults to the rising one.
@@ -132,4 +144,4 @@ gpu_mem=32
 #
 # Harmless before a pod's leg is fitted: pps-gpio on an unconnected pin presents
 # /dev/pps0 and no pulses, which is a quiet device rather than an error.
-dtoverlay=pps-gpio,gpiopin=24,assert_falling_edge=1
+dtoverlay=pps-gpio,gpiopin=26,assert_falling_edge=1
