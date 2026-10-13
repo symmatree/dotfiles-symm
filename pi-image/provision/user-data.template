@@ -66,8 +66,11 @@ user:
   ssh_authorized_keys:
     - "__FLEET_PUBKEY__"
 
-# Key-only. The password hash above exists for the serial console, not for sshd.
-ssh_pwauth: false
+# Password authentication is ON for sshd, alongside the key above. The operator's
+# way in when the key path is broken -- a wrong or rotated fleet key leaves a card
+# that no key reaches, and on a role with no serial console that costs a reflash.
+# PW_HASH in fleet.env is the credential; `pi` has passwordless sudo from the image.
+ssh_pwauth: true
 
 # WiFi as a NetworkManager keyfile, written directly -- NOT via cloud-init's
 # `network-config`.
