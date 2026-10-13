@@ -118,11 +118,21 @@ gpu_mem=32
 # second from here and the integer second from the coordinator over the gadget
 # network -- coordinator#370.
 #
-# A 1x2 in the odd row at the far end of the header, chosen for mechanical
-# clearance rather than electrically: it keeps away from the accelerometer's 2x5
-# at header pins 17-26 and the serial console at 6/8/10, so none of the three
-# connectors can foul another. Header pins 9/11 were the other candidate and are
-# out -- they sit alongside the console plug.
+# A 1x2 in the odd row at the far end of the header, and the constraint is
+# mechanical rather than electrical: PPS needs a pair of its own that no other
+# connector sits on top of. It keeps away from the accelerometer's 2x5 at header
+# pins 17-26 and the serial console at 6/8/10, so none of the three can foul
+# another. Header pins 9/11 were the other candidate and are out -- they sit
+# alongside the console plug.
+#
+# SO "SPARE" IN A PIN TABLE DOES NOT MEAN AVAILABLE. An earlier version of this
+# line used GPIO24 on header 18, justified from docs/campod-software.md listing
+# that position as "spare -- INT". It is spare in the sense that nothing is
+# assigned to it, and unavailable in the sense that the accelerometer's 2x5
+# covers header 17-26 whole -- a tenth position inside an occupied block is
+# reachable through THAT connector and by nothing else. Header 18 and 22 are
+# still the right spares for an accelerometer interrupt, on the accelerometer's
+# own cable; they were never candidates for a second connector.
 #
 # NOT the coordinator's pin, which is GPIO24 on header 18. There the signal
 # arrives as one line of a 2x4 that also carries SPI and power for the DS3234; a
