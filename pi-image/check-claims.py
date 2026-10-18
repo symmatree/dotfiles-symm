@@ -31,7 +31,7 @@ PASS, FAIL, UNKNOWN = "PASS", "FAIL", "UNKNOWN"
 
 # Per-role expectations. Only what the checks below need.
 ROLES = {
-    "campod": dict(data="/var/lib/campod", cma=131072,
+    "campod": dict(data="/var/lib/campod", cma=180224,
                    nodes=["spidev", "udc", "pps"],
                    absent=["drm", "sound"], uart_console=True,
                    blacklist=["drm", "snd_bcm2835", "bcm2835_v4l2", "bcm2835_codec"],
@@ -117,7 +117,7 @@ def _(o):
        "line and the glob then matches nothing", needs="cma")
 def _(o):
     want, got = o.expect["cma"], o.doc["cma_total_kb"]
-    return got == want, f"CmaTotal {got} kB, want {want} (256 MB = vc4 still loaded)"
+    return got == want, (f"CmaTotal {got} kB, want {want} -- 131072 means the card\n            predates cma-size, 262144 means vc4-kms-v3d is back, 5120 means the\n            directive did not parse and the camera will not start")
 
 
 @check("config.txt/driver-gone",
