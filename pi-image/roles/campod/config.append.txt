@@ -59,14 +59,35 @@ dtparam=spi=on
 # default is CONFIG_CMA_SIZE_MBYTES=5. Remove the overlay without this line and
 # the camera has 5MB to allocate from.
 #
-# 128MB because the overlays README gates cma-256 on 1GB of RAM and this board
-# has 512MB. No performance claim attaches to the size.
+# 176 MiB, sized for one more buffer set at full sensor resolution. coordinator#316
+# measured 99.6 MiB of dma_buf held at cma-128 and a third set at ~145 MiB, so the
+# region has to hold ~145-150 MiB and leave slack for the movable pages the
+# allocator puts in it. 176 gives ~26-31 MiB of that slack.
 #
-# The camera's actual requirement is measured in coordinator#316 and #339, and a
-# too-small reservation presents as a camera that will not start rather than as
-# an out-of-memory message -- so the check is that capture works at full sensor
-# resolution.
-dtoverlay=cma,cma-128
+# cma-size rather than a named preset: the overlays README annotates cma-192 and
+# everything above it "needs 1GB", and this board has 512MB. cma-size takes any
+# 4MB-aligned byte count with no such gate, so the region is sized to the
+# requirement instead of to the nearest preset. 0xB000000 = 184549376 = 176 MiB.
+#
+# THE ROOM COMES FROM THE PAGE CACHE, AND THE LIMIT IS THE DIRTY THRESHOLD, not
+# free memory. Measured on both pods armed at 4608x2592: 67-71 MiB free, zero
+# reclaim writes, zero throttled writers, nothing ever blocked, card 18-22% busy.
+# But dirty_background_threshold is a fraction of free-plus-reclaimable, so it
+# falls as capture consumes the cache -- 25 MiB paused to 16 MiB armed, against
+# dirty at 11.5. Taking 48 MiB more leaves dirty at roughly 90% of its threshold,
+# which turns background writeback from never-running into always-running. That
+# is the term to watch when this changes, not CmaFree.
+#
+# CmaFree IS NOT HEADROOM and must not be used to judge this: the allocator fills
+# the region with movable pages, so it reads near zero whatever the size. What the
+# camera actually holds is /sys/kernel/debug/dma_buf/bufinfo.
+#
+# Provisional. The 3 MP run (coordinator#559, 2304x1296 at buffer_count=4) brackets
+# this one, and whether the camera's requirement scales with buffer_count is what
+# that comparison settles. A too-small reservation presents as a camera that will
+# not start rather than as anything naming memory, so the check is still that
+# capture works at full sensor resolution.
+dtoverlay=cma,cma-size=0xB000000
 
 # GPU/CPU memory split. 64 MiB was never chosen on this role -- it is the
 # firmware default for a board under 1 GB -- and this device has no display, no
