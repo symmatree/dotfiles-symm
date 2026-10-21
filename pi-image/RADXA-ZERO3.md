@@ -91,7 +91,7 @@ against the schematic, because dl.radxa.com refused connections.
 
 | function | Pi Zero 2 W today | Zero 3W | same physical pin |
 |---|---|---|---|
-| serial console | 8 / 10 | 8 / 10, UART2_M0, **1500000** baud | yes |
+| serial (loader only, see step 6) | 8 / 10 | 8 / 10, UART2_M0, 1500000 baud | yes |
 | SPI MOSI / MISO / SCLK | 19 / 21 / 23 | 19 / 21 / 23, SPI3_M1 | yes |
 | SPI CS0 (the ADXL345) | 24 | 24, SPI3_CS0_M1 | yes |
 | SPI CS1 | 26 | **26 is not connected** | **no** |
@@ -235,41 +235,46 @@ stock U-Boot contains `fatload` and `ext4load` and the string `btrfs` zero times
    - **Camera:** a per-unit overlay. The shipped `radxa-zero3-rpi-camera-v2` /
      `-v1.3` for IMX219 / OV5647; our own for IMX708.
    - **Our own `.dtso`** in `user_overlays=`: `pps-gpio` on `GPIO1_A4` with the falling edge,
-     and `dr_mode = "peripheral"` on `usb@fcc00000`. Inferred: the vendor dtb's `otg` with
+     `dr_mode = "peripheral"` on `usb@fcc00000`, and `fiq-debugger` disabled (step 6). Inferred: the vendor dtb's `otg` with
      `extcon` would leave the role to cable detection, and the Pi campods pin it to
      peripheral.
 5. **Kernel command line,** via `extraargs`: root, and `cma=256M` kept. No `psi=1`: PSI is on
-   by default (measured). Console: `boot.cmd` sets `console=ttyS2,1500000` (measured,
-   line 29), but the dtb has `fiq-debugger` enabled and `serial@fe660000` (UART2) disabled
-   (measured). Open: which device carries the console on this kernel -- `ttyFIQ0` or `ttyS2`;
-   the image also ships `rk3568-uart2-m0` and `rk3568-fiq-debugger-uart2m0` overlays. Settled
-   on the bench.
-6. **cloud-init:** install it, since the image has none (measured), and disable
+   by default (measured).
+6. **No Linux serial console, to start** (Seth, 2026-10-21: no console rather than one
+   half-shared). Measured: `boot.cmd` sets `console=ttyS2,1500000` (line 29) while the dtb
+   has `fiq-debugger` enabled (`rockchip,serial-id = 2`, 1500000 baud) and `serial@fe660000`
+   (UART2 itself) disabled, so two drivers lay claim to pins 8/10. The conversion sets
+   `console=display` in `armbianEnv.txt`, which drops the serial `console=` token, and our `.dtso` sets `fiq-debugger` to disabled, so no
+   kernel driver owns UART2. Inferred, not measured: the loader (TPL/SPL/U-Boot, copied
+   verbatim in step 1) still prints on UART2 at 1500000 before Linux starts. A Linux console
+   later is either UART2 alone (`fiq-debugger` off, `serial@fe660000` on, `ttyS2`) or a
+   different UART on other header pins.
+7. **cloud-init:** install it, since the image has none (measured), and disable
    `armbian-firstrun` the way the extension does. Open: whether `Flash-Card.ps1`'s rpi-imager
    path writes the seed onto a non-Pi image's FAT partition, or whether this role needs its own
    seed writer.
-7. **Remove what an appliance should not run.** Measured enabled on the vendor image:
+8. **Remove what an appliance should not run.** Measured enabled on the vendor image:
    - `armbian-ramlog` (`/var/log` on a RAM disk) and `armbian-zram-config`;
    - `armbian-hardware-monitor`, `-optimize`, `-led-state` and `-resize-filesystem`;
    - timers `apt-daily`, `apt-daily-upgrade`, `man-db`, `fstrim`, `logrotate`,
      `dpkg-db-backup`, `e2scrub_all` and `fake-hwclock-save`;
    - cron jobs `armbian-updates`, `armbian-truncate-logs` and `armbian-check-battery`;
    - the motd scripts (measured on the `current` image).
-8. **Credentials and host keys.** Measured: root has a password (`1234` on the `current`
+9. **Credentials and host keys.** Measured: root has a password (`1234` on the `current`
    image; the vendor image's hash is present and was not cracked), sshd has
    `PermitRootLogin yes`, and the image ships six pre-generated SSH host key files, which
    `armbian-firstrun` regenerates. **Disabling firstrun without regenerating host keys some
    other way gives every card the same host key.** The conversion locks root, turns root SSH
    off, deletes the host keys, and generates them on first boot.
-9. **Networking:** the image is netplan (`10-dhcp-all-interfaces.yaml`) + systemd-networkd,
+10. **Networking:** the image is netplan (`10-dhcp-all-interfaces.yaml`) + systemd-networkd,
    with no NetworkManager (measured). The gadget profile, the WiFi keyfile and pod-link's radio
    control (`WirelessEnabled` over D-Bus, `docs/pod-bus.md`) all assume NetworkManager.
    Inferred: the conversion installs NetworkManager and removes netplan, so the network layer
    matches the Pi roles rather than gaining a second implementation.
-10. **Packages:** the same `APT_INSTALL` as the campod role. `btrfs-progs` is already present
+11. **Packages:** the same `APT_INSTALL` as the campod role. `btrfs-progs` is already present
     (measured). This role has no `raspi-config` cascade to guard, but the purge simulation
     carries over as is.
-11. **IMX708:** the kernel or module build above.
+12. **IMX708:** the kernel or module build above.
 
 ### What carries over, and what does not
 
@@ -294,7 +299,7 @@ board difference as a knob rather than a copy. Read: the MAC derivation hashes t
 
 **Now, with no board (de-risking):**
 
-1. Add `roles/rampod.env` and a Rockchip branch of `build-image.sh` that does steps 1-11,
+1. Add `roles/rampod.env` and a Rockchip branch of `build-image.sh` that does steps 1-12,
    and build it in CI on `ubuntu-24.04-arm` next to the Pi roles. Everything up to booting is
    checkable offline: GPT, loader bytes, btrfs in the initramfs, `armbianEnv.txt`, the IMX708
    module present, the overlays applying with `fdtoverlay` against `rk3566-radxa-zero3.dtb`.
@@ -304,9 +309,9 @@ board difference as a knob rather than a copy. Read: the MAC derivation hashes t
 
 **When a board arrives,** in the order of the requirements:
 
-1. Boot the stock Armbian vendor image once on the serial console at 1500000 baud, and record
-   which console device answers, `lsusb -t`, `dmesg` and `/proc/meminfo` as a baseline before
-   any of our changes.
+1. Boot the stock Armbian vendor image once, with a UART on pins 8/10 at 1500000 baud, and
+   record what the loader and kernel print there, `lsusb -t`, `dmesg` and `/proc/meminfo` as a
+   baseline before any of our changes.
 2. Boot our image. Check that cloud-init personalises it and the claim checker passes.
 3. Bring the gadget link up against the coordinator.
 4. PPS on pin 37, then the ADXL345 on CS0.
