@@ -26,7 +26,7 @@ esac
 
 OUT="$OUT_DIR/$(echo "$TARGET" | tr '@/' '__').json"
 
-# sudo: a few claims (the sudoers file, lsattr on /var/lib/docker) sit behind
+# sudo: a few claims (the sudoers file, lsattr on /var/lib/containers) sit behind
 # root-only directories, and an unprivileged probe reports them UNKNOWN rather
 # than guessing. -n so this fails loudly instead of hanging on a password prompt.
 echo "== probing $TARGET ==" >&2

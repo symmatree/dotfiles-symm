@@ -633,7 +633,8 @@ regenerate_initramfs() {
 	#           user-data sets a keymap. Removing them means removing that too.
 	#   e2fsprogs  Priority: required. Its scrub units are masked below instead --
 	#           ext4 scrubbing on a btrfs root.
-	#   apparmor   Docker confines containers with it.
+	#   apparmor   podman confines containers with it (containers.conf
+	#           apparmor_profile, default "container-default").
 	#   polkitd    NetworkManager depends on it, and it is running.
 	#   wpa_supplicant  NetworkManager's 802.11 backend, running.
 	#   rpi-eeprom  no EEPROM on a Zero 2 W, but the coordinator and pocketterm

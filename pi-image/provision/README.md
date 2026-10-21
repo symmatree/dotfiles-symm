@@ -140,10 +140,12 @@ string anywhere in the template -- including in a comment -- breaks the render.
 
 ## Handling of secrets
 
-`fleet.env` is gitignored and holds the only real secret in the flow: the WiFi PSK. The
-SSH key is a **public** key, the hostname is not secret, and with key-only auth the
-password hash protects an account that has no reachable password login. Nothing here is
-baked into the image, so the image itself stays publishable.
+`fleet.env` is gitignored and holds the two real secrets in the flow: the WiFi PSK, and
+the password hash. sshd accepts password login (`ssh_pwauth: true`, so a broken key is
+not a reflash) and `pi` has passwordless sudo, so the hash is an offline-crackable root
+credential for every card flashed with it. The SSH key is a **public** key and the
+hostname is not secret. Nothing here is baked into the image, so the image itself stays
+publishable.
 
 A rendered `user-data` **does** contain the PSK and the password hash, each exactly once.
 `Flash-Card.ps1` writes it to a temp file and deletes it in a `finally` block.
