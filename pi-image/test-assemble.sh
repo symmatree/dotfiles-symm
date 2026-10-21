@@ -176,11 +176,11 @@ fi
 CM="$(cat "$OUT/cmdline.fragment")"
 [ "$CM" = "rootfstype=btrfs rootflags=subvol=@" ] && pass "cmdline fragment correct: $CM" || fail "cmdline wrong: $CM"
 
-# 5h. docker data-root is nodatacow (chattr +C took)
+# 5h. podman's store is nodatacow (chattr +C took)
 mount -t btrfs -o "subvol=@var" "$MNT/.snapshots" 2>/dev/null || mkdir -p "$WORK/varmnt"
 mount -t btrfs -o "subvol=@var" "$LOOP" "$WORK/varmnt" 2>/dev/null && {
-	ATTRS="$(lsattr -d "$WORK/varmnt/lib/docker" 2>/dev/null | awk '{print $1}')"
-	case "$ATTRS" in *C*) pass "@var/lib/docker is nodatacow (lsattr: $ATTRS)" ;; *) fail "docker dir not +C (lsattr: $ATTRS)" ;; esac
+	ATTRS="$(lsattr -d "$WORK/varmnt/lib/containers" 2>/dev/null | awk '{print $1}')"
+	case "$ATTRS" in *C*) pass "@var/lib/containers is nodatacow (lsattr: $ATTRS)" ;; *) fail "podman store not +C (lsattr: $ATTRS)" ;; esac
 	umount "$WORK/varmnt"
 }
 

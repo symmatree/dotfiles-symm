@@ -21,7 +21,7 @@
 #   create @ @usr @var @home @data @scratch @snapshots
 #   populate each subvol from the right slice of $ROOTFS
 #   create the mountpoint dirs the fstab needs (incl. @data's nest under @var)
-#   chattr +C on @var/lib/docker and @scratch  (nodatacow; see below)
+#   chattr +C on @var/lib/containers and @scratch  (nodatacow; see below)
 #   write /etc/fstab into @  (@data mounts at $DATA_MOUNT)
 #   emit the kernel cmdline fragment to $OUT_DIR/cmdline.fragment
 #
@@ -127,10 +127,10 @@ mkdir -p "$TOP/@"/{usr,var,home,tmp,scratch,boot/firmware,.snapshots}
 
 # @data mounts under /var (e.g. /var/lib/coordinator or /var/lib/store), i.e.
 # INSIDE @var -- so its mountpoint dir must exist in @var, not @. Same for
-# docker's data-root.
+# podman's store.
 echo "== create nested mountpoints in @var =="
 mkdir -p "$TOP/@var${DATA_UNDER_VAR}"
-mkdir -p "$TOP/@var"/lib/docker
+mkdir -p "$TOP/@var"/lib/containers
 
 # ---- nodatacow, via the inode flag ------------------------------------------
 # Per-directory with chattr +C, NOT a mount option. btrfs(5): "Most mount options
@@ -142,17 +142,18 @@ mkdir -p "$TOP/@var"/lib/docker
 # +C is inherited by files created afterwards and does not convert existing ones,
 # so it only means anything on an empty directory. Both of these are empty here.
 #
-#   @var/lib/docker  overlay2 does its own CoW; btrfs CoW underneath multiplies
-#                    write amplification badly
+#   @var/lib/containers  podman's rootful store. With no storage.conf in the
+#                        image it auto-selects overlay, which does its own CoW;
+#                        btrfs CoW underneath multiplies write amplification badly
 #   @scratch         exists to BE the write-heavy append-and-overwrite area
 #                    (WAL/sim), which is the pattern CoW is worst at
-echo "== chattr +C @var/lib/docker, @scratch =="
-chattr +C "$TOP/@var/lib/docker"
+echo "== chattr +C @var/lib/containers, @scratch =="
+chattr +C "$TOP/@var/lib/containers"
 chattr +C "$TOP/@scratch"
 
 # Read it back: a flag that silently did not take is the exact failure this
 # replaces, so do not just announce it.
-for d in "$TOP/@var/lib/docker" "$TOP/@scratch"; do
+for d in "$TOP/@var/lib/containers" "$TOP/@scratch"; do
 	attrs="$(lsattr -d "$d" | awk '{print $1}')"
 	case "$attrs" in
 	*C*) echo "   ${d#"$TOP"/}: $attrs" ;;

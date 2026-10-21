@@ -174,13 +174,13 @@ def device_nodes():
 def nodatacow():
     """chattr +C targets. Cannot be a mount option on btrfs; must be an inode flag."""
     out = {}
-    for path in ("/var/lib/docker", "/scratch"):
+    for path in ("/var/lib/containers", "/scratch"):
         if not os.path.exists(path):
             out[path] = None
             continue
         got = run("lsattr", "-d", path)
-        # /var/lib/docker is 0710 root:root -- unreadable unprivileged, and that
-        # is not the same as having no +C flag.
+        # an unprivileged lsattr can fail on a root-owned directory, and that is
+        # not the same as having no +C flag.
         out[path] = got.split()[0] if got else UNKNOWN
     return out
 
