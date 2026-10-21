@@ -82,9 +82,10 @@ image's `rk3566-radxa-zero3.dtb`:
 
 Mainline's tree agrees (read, `rk356x-base.dtsi:265-291`, `rk3566-base.dtsi:26-31`). That
 corrects `coordinator/docs/os-and-driver-handoff.md`, which says the OTG port is dwc2-family.
-The gadget link stays at 480 Mbit/s, the class the Zero 2 W already runs at. Inferred: the
-mapping of each connector to a controller follows from the PHY types; it has not been checked
-against the schematic, because dl.radxa.com refused connections.
+The gadget link stays at 480 Mbit/s, the class the Zero 2 W already runs at. Read, the
+[v1.11 schematic](https://dl2.radxa.com/zero3/docs/hw/3w/radxa_zero_3w_v1110_schematic.pdf) (dl2.radxa.com serves it; dl.radxa.com refuses connections), sheets 17 and 22: the power
+Type-C (J2) is `USB_OTG0` and the USB3 Type-C (J9) is `USB3_HOST1`. Header pins 2/4 and J2's
+VBUS are the same `+5V_INPUT` net, which feeds `VCC_SYS` (sheets 20, 22).
 
 **The header keeps the Pi's physical pins.** Read: mainline `gpio-line-names`
 (`rk3566-radxa-zero-3.dtsi:108-177`) and Radxa's pinout agree.
@@ -144,11 +145,16 @@ Read, [FLIR spec page](http://softwareservices.flir.com/BFS-U3-244S8/latest/Mode
 
 Inferred arithmetic: a full frame is 24.5 MB at Mono8 and 36.7 MB at Mono12p.
 
-**Power is the first constraint.** 4.2 W at 5 V is about 840 mA. Read, from a search snippet of
-a mirrored Radxa datasheet only (the PDF did not extract): the USB-C 2 host port is "constrained
-to a maximum electrical current of 500mA". A
-[forum user](https://forum.radxa.com/t/radxa-zero-3e-increase-500ma-for-usb3/26956) could not
-raise it. FLIR's
+**Power.** 4.2 W at 5 V is about 840 mA. Read, schematic sheet 17: J9's 5 V comes from
+`VCC_SYS` through an SY6280AAC load switch with its enable pulled high, so it is always on.
+flight-hardware read its current-limit resistor as 4.7k, which with the datasheet's
+Ilim = 6800/Rset gives about 1.45 A nominal (their reading; the datasheet formula was not
+opened here). The "500mA" in Radxa's product brief, earlier taken here from a search snippet,
+is the USB 3.0 spec figure, not this switch's setting (flight-hardware). A
+[forum user](https://forum.radxa.com/t/radxa-zero-3e-increase-500ma-for-usb3/26956) reported
+being unable to raise a 500 mA limit; that thread was not re-read against the schematic.
+Inferred: whatever the camera draws at 5 V over J9 comes off `VCC_SYS`, so off the same
+`+5V_INPUT` as the board, through the coordinator hub's lead to J2. FLIR's
 [ARM note](https://www.teledynevisionsolutions.com/support/support-center/application-note/iis/using-spinnaker-on-arm-and-embedded-systems/)
 lists insufficient bus power as a known failure. Inferred: the camera gets its own supply on
 VAUX (Hirose pin 1, 8-24 V). That is flight-hardware's call, and so is whether its draw then
@@ -161,8 +167,26 @@ comes off the coordinator's hub at all.
   kernel branch, vendor included.
 - An unpowered hub fails on mainline 6.12/6.16 and works on vendor 6.1.
 
-The camera plugs in directly. The orientation half applies; `lsusb -t` names the speed, so it
-is the first thing to check on the bench.
+**Why orientation matters: a lane mux nobody drives.** Read, schematic sheet 17 (flight-hardware's
+reading, and the part and net names confirmed in the PDF's text): J9's SuperSpeed pairs go
+through a CH482D 2:1 mux (U12) whose `SEL` comes from the GPIO net `USB3.0_EN_H` through an
+N-FET (Q4, 2SK3018) with a 10k pull-up. Orientation is detected by an ET7301B CC controller (U6)
+on `I2C3_M1` with interrupt `TYPEC_INT`; it does not drive `SEL` itself.
+
+- Read, Armbian vendor tree `rk-6.1-rkr5.1`, `rk3566-radxa-zero3.dtsi:609-621`: an
+  `fcs,fusb302` node at `0x22` on i2c3, interrupt `GPIO3_C7`, and
+  `sel-gpios = <&gpio0 RK_PC5 GPIO_ACTIVE_HIGH>`. Measured: the same in the image's dtb.
+- Read, that tree's `drivers/usb/typec/tcpm/fusb302.c`: the only GPIO it requests is
+  `fcs,int_n` (line 1643). Nothing reads `sel-gpios`.
+- Measured: the mainline (`current`) dtb has no node on that controller at all.
+
+Inferred: `GPIO0_C5` is `USB3.0_EN_H` (from the dtsi's `sel-gpios`; the schematic's text
+extraction does not give the ball). On both kernels nothing sets it from the detected orientation, so `SEL`
+sits wherever its default leaves it and only one plug orientation gets SuperSpeed -- which is
+the forum's symptom. Two ways out: drive `GPIO0_C5` from the polarity the CC controller reports
+(a small kernel or userspace hook), or fix the plug orientation physically, which a captive
+cable in an airframe may already do. The camera plugs in directly, so the hub half may not
+apply; `lsusb -t` names the speed, so it is the first thing to check on the bench.
 
 **Camera software, as it touches this layer.** Both stacks reach the camera through usbfs via
 libusb and need no kernel module (read). The OS-side requirements are the same either way:
@@ -322,7 +346,8 @@ board difference as a knob rather than a copy. Read: the MAC derivation hashes t
 
 ## Decisions that are not this layer's
 
-- **FLIR power** (VAUX supply, and the 500 mA limit on USB-C 2): flight-hardware.
+- **FLIR power** (VAUX supply, or 5 V over J9 at the load switch's ~1.45 A): flight-hardware.
+- **USB3 orientation** (drive the mux select, or fix the plug orientation): open.
 - **Capture software** for both camera kinds (Aravis or Spinnaker for the FLIR; the Rockchip
   ISP path for the MIPI modules), and pixel format and compression, which set the write rate:
   flight-platform.
