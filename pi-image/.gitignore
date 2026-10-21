@@ -2,3 +2,4 @@
 .build/
 *.img
 *.img.xz
+__pycache__/
