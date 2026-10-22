@@ -1,0 +1,162 @@
+// rampod camera overlay: a Raspberry Pi Camera Module 3 / Arducam IMX708 on the
+// 22-pin CSI connector. A unit with a different camera lists a different
+// overlay in armbianEnv.txt instead of this one.
+//
+// This is the vendor image's radxa-zero3-rpi-camera-v2 overlay (IMX219) with
+// the sensor node swapped. The sensor node follows the vendor tree's own IMX708
+// description, recomputer-rk3588-devkit-cam.dtsi: address 0x1a, clock "xclk",
+// two lanes, 450 MHz link. The pipeline around it -- dphy0, rkisp_vir0, rkisp,
+// rkcif and their IOMMUs -- is the IMX219 overlay's, unchanged.
+//
+// Not here: lens-focus. The autofocus motor's driver (dw9807 in that tree) is
+// not built, and its compatible collides with the in-tree dw9807-vcm.
+//
+// Plain numbers rather than #include <dt-bindings/...>: dtc alone compiles this.
+
+/dts-v1/;
+/plugin/;
+
+/ {
+	metadata {
+		title = "rampod IMX708 camera";
+		compatible = "radxa,zero3";
+		category = "camera";
+		exclusive = "csi2_dphy0";
+		description = "Raspberry Pi Camera Module 3 (IMX708) on CSI, two lanes.";
+	};
+
+	fragment@0 {
+		target-path = "/";
+		__overlay__ {
+			rampod_cam_clk: rampod-camera-clock-24m {
+				compatible = "fixed-clock";
+				#clock-cells = <0>;
+				clock-frequency = <24000000>;
+				clock-output-names = "rampod_cam_24m";
+			};
+
+			// The camera's power enable, GPIO3_C6, held on -- as the vendor's
+			// IMX219 overlay does for the same connector.
+			rampod-camera-pwr {
+				compatible = "regulator-fixed";
+				regulator-name = "rampod_camera_pwr";
+				regulator-always-on;
+				regulator-boot-on;
+				enable-active-high;
+				// <&gpio3 RK_PC6 GPIO_ACTIVE_HIGH>
+				gpio = <&gpio3 22 0>;
+			};
+		};
+	};
+
+	fragment@1 {
+		target = <&i2c2>;
+		__overlay__ {
+			status = "okay";
+			pinctrl-names = "default";
+			pinctrl-0 = <&i2c2m1_xfer>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			camera-imx708@1a {
+				compatible = "sony,imx708";
+				reg = <0x1a>;
+				clocks = <&rampod_cam_clk>;
+				clock-names = "xclk";
+				rockchip,camera-module-index = <0>;
+				rockchip,camera-module-facing = "back";
+				rockchip,camera-module-name = "rpi-camera-v3";
+				rockchip,camera-module-lens-name = "default";
+				status = "okay";
+
+				port {
+					rampod_cam_out: endpoint {
+						remote-endpoint = <&rampod_mipi_in>;
+						data-lanes = <1 2>;
+						link-frequencies = /bits/ 64 <450000000>;
+					};
+				};
+			};
+		};
+	};
+
+	fragment@2 {
+		target = <&csi2_dphy_hw>;
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
+	fragment@3 {
+		target = <&csi2_dphy0>;
+		__overlay__ {
+			status = "okay";
+			ports {
+				#address-cells = <1>;
+				#size-cells = <0>;
+				port@0 {
+					reg = <0>;
+					#address-cells = <1>;
+					#size-cells = <0>;
+					rampod_mipi_in: endpoint@1 {
+						reg = <1>;
+						remote-endpoint = <&rampod_cam_out>;
+						data-lanes = <1 2>;
+					};
+				};
+				port@1 {
+					reg = <1>;
+					#address-cells = <1>;
+					#size-cells = <0>;
+					rampod_dphy_out: endpoint@1 {
+						reg = <1>;
+						remote-endpoint = <&rampod_isp_in>;
+					};
+				};
+			};
+		};
+	};
+
+	fragment@4 {
+		target = <&rkisp_vir0>;
+		__overlay__ {
+			status = "okay";
+			port {
+				#address-cells = <1>;
+				#size-cells = <0>;
+				rampod_isp_in: endpoint@0 {
+					reg = <0>;
+					remote-endpoint = <&rampod_dphy_out>;
+				};
+			};
+		};
+	};
+
+	fragment@5 {
+		target = <&rkisp>;
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
+	fragment@6 {
+		target = <&rkisp_mmu>;
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
+	fragment@7 {
+		target = <&rkcif_mmu>;
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
+	fragment@8 {
+		target = <&rkcif>;
+		__overlay__ {
+			status = "okay";
+		};
+	};
+};
