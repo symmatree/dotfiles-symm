@@ -173,6 +173,13 @@ through a CH482D 2:1 mux (U12) whose `SEL` comes from the GPIO net `USB3.0_EN_H`
 N-FET (Q4, 2SK3018) with a 10k pull-up. Orientation is detected by an ET7301B CC controller (U6)
 on `I2C3_M1` with interrupt `TYPEC_INT`; it does not drive `SEL` itself.
 
+Read by flight-hardware from the rendered sheet: `SEL` (U12 pin 8) has a 10k pull-up (R71) to
+`VCC_3V3` and is pulled to ground by Q4, whose gate is driven from `USB3.0_EN_H` through 1k.
+So `USB3.0_EN_H` high gives `SEL=0` (SW1; "SEL (0=SW1,1=SW2)" is printed on the sheet), and
+low or undriven gives `SEL=1` (SW2). The mux enable is tied to ground, so it is always on.
+U6's CC pins go to J9, its `INT#` to `TYPEC_INT` with a 2.2k pull-up, and nothing of it to
+`SEL`.
+
 - Read, Armbian vendor tree `rk-6.1-rkr5.1`, `rk3566-radxa-zero3.dtsi:609-621`: an
   `fcs,fusb302` node at `0x22` on i2c3, interrupt `GPIO3_C7`, and
   `sel-gpios = <&gpio0 RK_PC5 GPIO_ACTIVE_HIGH>`. Measured: the same in the image's dtb.
@@ -181,9 +188,9 @@ on `I2C3_M1` with interrupt `TYPEC_INT`; it does not drive `SEL` itself.
 - Measured: the mainline (`current`) dtb has no node on that controller at all.
 
 Inferred: `GPIO0_C5` is `USB3.0_EN_H` (from the dtsi's `sel-gpios`; the schematic's text
-extraction does not give the ball). On both kernels nothing sets it from the detected orientation, so `SEL`
-sits wherever its default leaves it and only one plug orientation gets SuperSpeed -- which is
-the forum's symptom. Two ways out: drive `GPIO0_C5` from the polarity the CC controller reports
+extraction does not give the ball). On both kernels nothing sets it from the detected
+orientation, so `SEL` stays at 1 (SW2) unless the pin comes out of reset driven high, and only
+one plug orientation gets SuperSpeed -- which is the forum's symptom. Two ways out: drive `GPIO0_C5` from the polarity the CC controller reports
 (a small kernel or userspace hook), or fix the plug orientation physically, which a captive
 cable in an airframe may already do. The camera plugs in directly, so the hub half may not
 apply; `lsusb -t` names the speed, so it is the first thing to check on the bench.
