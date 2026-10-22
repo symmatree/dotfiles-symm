@@ -47,6 +47,9 @@ mkdir -p "$OUT_DIR"
 #   METADATA    mkfs.btrfs metadata profile: single on SD, dup on NVMe.
 DATA_MOUNT="${DATA_MOUNT:-/var/lib/coordinator}"
 METADATA="${METADATA:-single}"
+# Where the FAT boot partition mounts. The Pi firmware reads it at /boot/firmware;
+# Armbian's U-Boot and kernel packages expect /boot itself.
+BOOT_MOUNT="${BOOT_MOUNT:-/boot/firmware}"
 case "$DATA_MOUNT" in
 /var/*) DATA_UNDER_VAR="${DATA_MOUNT#/var}" ;; # e.g. /lib/coordinator, /lib/store
 *)
@@ -123,7 +126,8 @@ echo "== populate @data from $DATA_MOUNT (if present in the rootfs) =="
 # A subvol mounted at /X needs the dir /X to exist in whatever subvol owns that
 # path. @usr/@var/@home/.snapshots/boot/firmware/tmp are all children of @.
 echo "== create mountpoints in @ =="
-mkdir -p "$TOP/@"/{usr,var,home,tmp,scratch,boot/firmware,.snapshots}
+mkdir -p "$TOP/@"/{usr,var,home,tmp,scratch,.snapshots}
+mkdir -p "$TOP/@$BOOT_MOUNT"
 
 # @data mounts under /var (e.g. /var/lib/coordinator or /var/lib/store), i.e.
 # INSIDE @var -- so its mountpoint dir must exist in @var, not @. Same for
@@ -208,7 +212,7 @@ echo "== write /etc/fstab (UUID=$UUID, boot=$BOOTFS_SPEC) =="
 	# everything reading /boot/firmware depends on. The cost of omitting it is that
 	# an unmountable FAT partition stops the boot, which is correct here: the
 	# firmware already read that partition to reach the kernel.
-	printf '%-42s  %-22s  %-5s  %s  0 2\n' "$BOOTFS_SPEC" "/boot/firmware" "vfat" "defaults"
+	printf '%-42s  %-22s  %-5s  %s  0 2\n' "$BOOTFS_SPEC" "$BOOT_MOUNT" "vfat" "defaults"
 	printf '%-42s  %-22s  %-5s  %s  0 0\n' "tmpfs" "/tmp" "tmpfs" "defaults,noatime,nosuid,nodev"
 } >"$FSTAB"
 

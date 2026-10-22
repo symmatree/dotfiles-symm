@@ -62,6 +62,14 @@ log "growing ${part} (p${pnum}) to fill /dev/$disk -- $((slack / 2048)) MiB unpa
 #                     a partition on the disk is mounted
 #   --no-tell-kernel  do not ask the kernel to update, for the same reason --
 #                     partx below does it for the one partition instead
+#
+# A GPT card (the Rockchip roles) carries a backup header at the end of the
+# IMAGE, which on a larger card is the middle of the disk, and the header's
+# last-usable sector stops there too. Move it to the real end first, or ",+"
+# extends only as far as the image did. No-op on an MBR card.
+if [ "$(blkid -o value -s PTTYPE "/dev/$disk")" = gpt ]; then
+	sfdisk --no-reread --no-tell-kernel --relocate gpt-bak-std "/dev/$disk"
+fi
 printf ',+\n' | sfdisk --no-reread --no-tell-kernel -N "$pnum" "/dev/$disk"
 partx -u --nr "$pnum" "/dev/$disk"
 btrfs filesystem resize max /

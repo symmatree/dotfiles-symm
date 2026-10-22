@@ -1,0 +1,72 @@
+// rampod base overlay -- every Radxa Zero 3W rampod, whatever its camera.
+// Listed in armbianEnv.txt user_overlays= by build-rockchip.sh, compiled with
+// `dtc -@` and test-applied against the vendor dtb at build time.
+//
+// Plain numbers rather than #include <dt-bindings/...>: the build compiles this
+// with dtc alone, no kernel tree. Each is named where it is used.
+//
+// Against the vendor kernel's rk3566-radxa-zero3.dtb (Armbian 6.1.115). Labels
+// (&usbdrd_dwc3, &fiq_debugger, &gpio1, &pinctrl, &pcfg_pull_none) are that
+// tree's, read from its __symbols__.
+
+/dts-v1/;
+/plugin/;
+
+/ {
+	metadata {
+		title = "rampod base";
+		compatible = "radxa,zero3";
+		description = "PPS on header pin 37, USB-C 1 as a gadget, no FIQ debugger on UART2.";
+	};
+
+	// PPS on header pin 37, GPIO1_A4 -- the physical pin the Pi campods use.
+	fragment@0 {
+		target-path = "/";
+		__overlay__ {
+			pps {
+				compatible = "pps-gpio";
+				pinctrl-names = "default";
+				pinctrl-0 = <&rampod_pps_pin>;
+				// <&gpio1 RK_PA4 GPIO_ACTIVE_HIGH>
+				gpios = <&gpio1 4 0>;
+				// The campods take the falling edge; same here until a leg is
+				// on a scope.
+				assert-falling-edge;
+				status = "okay";
+			};
+		};
+	};
+
+	// The pin as a plain GPIO with no pull. In the base dtb it is listed as an
+	// alternate for i2s1 and pdm, neither enabled, so this claims it for PPS.
+	fragment@1 {
+		target = <&pinctrl>;
+		__overlay__ {
+			rampod-pps {
+				rampod_pps_pin: rampod-pps-pin {
+					// <bank RK_PA4 RK_FUNC_GPIO &pcfg_pull_none>
+					rockchip,pins = <1 4 0 &pcfg_pull_none>;
+				};
+			};
+		};
+	};
+
+	// USB-C 1 is the gadget link to the coordinator, never a host. The base dtb
+	// says otg with an extcon, which leaves the role to cable detection.
+	fragment@2 {
+		target = <&usbdrd_dwc3>;
+		__overlay__ {
+			dr_mode = "peripheral";
+		};
+	};
+
+	// No Linux serial console to start (Seth, 2026-10-21). The base dtb gives
+	// UART2 (pins 8/10) to the FIQ debugger and disables the UART's own node;
+	// turning the debugger off leaves no kernel driver on those pins.
+	fragment@3 {
+		target = <&fiq_debugger>;
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+};
