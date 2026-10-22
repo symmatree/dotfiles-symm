@@ -8,8 +8,8 @@
 // two lanes, 450 MHz link. The pipeline around it -- dphy0, rkisp_vir0, rkisp,
 // rkcif and their IOMMUs -- is the IMX219 overlay's, unchanged.
 //
-// Not here: lens-focus. The autofocus motor's driver (dw9807 in that tree) is
-// not built, and its compatible collides with the in-tree dw9807-vcm.
+// No lens-focus: the modules rampod carries have a mechanical, fixed-focus lens
+// with no focus motor (Seth, 2026-10-22), so there is no VCM to describe.
 //
 // Plain numbers rather than #include <dt-bindings/...>: dtc alone compiles this.
 
