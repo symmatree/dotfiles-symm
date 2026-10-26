@@ -59,11 +59,11 @@ max_framebuffers=2
 dtoverlay=dwc2,dr_mode=host
 [all]
 '
-run "vendor config.txt" 'dtoverlay=vc4-kms-v3d*' 'dtparam=audio=on' 'display_auto_detect=*'
+run "vendor config.txt" 'dtoverlay=vc4-kms-v3d*' 'dtparam=audio=on' 'display_auto_detect=*' 'camera_auto_detect=*'
 want_line '# disabled by test: dtparam=audio=on'
 want_line '# disabled by test: dtoverlay=vc4-kms-v3d'
 want_line '# disabled by test: display_auto_detect=1'
-want_line 'camera_auto_detect=1'        # the camera must survive
+want_line '# disabled by test: camera_auto_detect=1'
 want_line 'auto_initramfs=1'            # so must the initramfs switch
 want_line '[cm5]'                       # section headers untouched
 want_no_line $'\ndtoverlay=vc4-kms-v3d' # no live copy left

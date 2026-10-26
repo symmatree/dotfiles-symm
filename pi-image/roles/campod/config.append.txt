@@ -54,6 +54,19 @@ dtoverlay=dwc2,dr_mode=peripheral
 # Inert with nothing on the bus, so a campod without a sensor pays nothing.
 dtparam=spi=on
 
+# Camera: Arducam B0310, an IMX708 with an M12 lens focused by hand. Arducam's
+# instructions for its IMX708 modules are camera_auto_detect=0 and
+# dtoverlay=imx708 under [all] -- the firmware's auto-detect does not find them
+# (https://docs.arducam.com/Raspberry-Pi-Camera/Native-camera/12MP-IMX708/).
+# campod.env comments out the vendor camera_auto_detect=1; the explicit 0 here
+# says so in the file the firmware reads.
+#
+# vcm=off: the overlay enables the focus-motor (VCM) node by default (overlays
+# README), and this module has no motor. With the node present, libcamera
+# offers LensPosition and capture.py treats the lens as movable.
+camera_auto_detect=0
+dtoverlay=imx708,vcm=off
+
 # CMA. REQUIRED by the vc4-kms-v3d removal in campod.env rather than merely
 # paired with it: that overlay is what sets CMA from device tree, and the kernel
 # default is CONFIG_CMA_SIZE_MBYTES=5. Remove the overlay without this line and
