@@ -480,19 +480,14 @@ regenerate_initramfs() {
 		# No autoremove here. Guard 1 makes one safe, but its removal set is
 		# unbounded and guard 2 does not cover it, so it is left to the converge --
 		# where the same marks apply.
-		# Nothing runs on a schedule. coordinator#282 masks these on a converged
-		# device; doing it here as well closes the window between flash and first
-		# converge, on a card whose timers would otherwise fire with Persistent=true
-		# and catch up every missed window at once. Same list as that role, so the
-		# two cannot drift -- add there and here together. Masking a unit whose
-		# package is absent is legal and keeps the decision made.
-		#
-		# systemd-tmpfiles-clean.timer is deliberately NOT masked: it is the only
-		# thing enforcing /tmp cleanup, and /tmp is a tmpfs here.
+		# Nothing runs on a schedule. The list and its reasons live in the
+		# coordinator repo, host/ansible/roles/no-scheduled-maintenance, which masks
+		# these on every converge. This copy closes the window between flash and
+		# first converge. Change the list there first, then here.
 		systemctl mask \
 			apt-daily.timer apt-daily-upgrade.timer \
 			man-db.timer dpkg-db-backup.timer logrotate.timer \
-			e2scrub_all.timer fstrim.timer
+			e2scrub_all.timer fstrim.timer systemd-tmpfiles-clean.timer
 		# Not a timer, so not in that list: ext4 scrubbing on a btrfs root.
 		systemctl mask e2scrub_reap.service
 		update-initramfs -u -k all

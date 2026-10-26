@@ -360,12 +360,14 @@ chroot_pass() {
 		# The interactive first-login wizard keys off this file.
 		rm -f /root/.not_logged_in_yet
 
-		# -- Same timer list as build-image.sh and coordinator#282, plus
-		#    fake-hwclock's save timer, which writes the card on a schedule.
+		# -- The timer list from the coordinator repo's
+		#    host/ansible/roles/no-scheduled-maintenance (see build-image.sh),
+		#    plus fake-hwclock's save timer, which writes the card on a schedule.
 		systemctl mask \
 			apt-daily.timer apt-daily-upgrade.timer \
 			man-db.timer dpkg-db-backup.timer logrotate.timer \
-			e2scrub_all.timer fstrim.timer fake-hwclock-save.timer
+			e2scrub_all.timer fstrim.timer systemd-tmpfiles-clean.timer \
+			fake-hwclock-save.timer
 		systemctl mask e2scrub_reap.service
 		# Armbian's cron jobs (armbian-updates, -truncate-logs, -check-battery).
 		systemctl mask cron.service
