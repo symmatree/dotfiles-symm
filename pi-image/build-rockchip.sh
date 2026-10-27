@@ -270,6 +270,54 @@ write_armbian_env() {
 }
 
 # =============================================================================
+# 4b. device permissions and the WiFi country, the two things Raspberry Pi OS
+#     ships and Armbian does not.
+# =============================================================================
+
+# Raspberry Pi OS puts /dev/spidev*, /dev/i2c-* and /dev/gpiochip* in the spi,
+# i2c and gpio groups (raspberrypi-sys-mods, 99-com.rules). Armbian has neither
+# the groups nor the rules, so the nodes are root-only and the pi account's
+# group list does nothing. The payload runs privileged and does not need this;
+# a person on the bench does. The lines are Pi OS's own, minus its legacy
+# sysfs-gpio chgrp.
+install_device_rules() {
+	echo "== udev rules: spi, i2c, gpio groups =="
+	mkdir -p "$ROOTFS/etc/udev/rules.d"
+	cat >"$ROOTFS/etc/udev/rules.d/99-fleet-devices.rules" <<-'EOF'
+		# Written by dotfiles-symm pi-image/build-rockchip.sh, after Raspberry Pi
+		# OS's 99-com.rules.
+		SUBSYSTEM=="i2c-dev", GROUP="i2c", MODE="0660"
+		SUBSYSTEM=="spidev", GROUP="spi", MODE="0660"
+		SUBSYSTEM=="gpio", GROUP="gpio", MODE="0660"
+	EOF
+}
+
+# What raspi-config nonint do_wifi_country does on a Pi, for this board:
+# cfg80211.ieee80211_regdom on the kernel command line (armbianEnv.txt's
+# extraargs here, cmdline.txt there) so it holds from boot, and iw reg set for
+# the running kernel. user-data calls it once, at first boot, in place of
+# raspi-config, which Armbian does not have.
+install_wifi_country() {
+	echo "== /usr/local/sbin/wifi-country =="
+	install -D -m 0755 /dev/stdin "$ROOTFS/usr/local/sbin/wifi-country" <<-'EOF'
+		#!/bin/sh
+		# Set the WiFi regulatory domain: wifi-country <ISO 3166 alpha-2>.
+		# Written by dotfiles-symm pi-image/build-rockchip.sh.
+		set -eu
+		cc="$1"
+		grep -q "^${cc}[[:space:]]" /usr/share/zoneinfo/iso3166.tab || {
+			echo "wifi-country: $cc is not an ISO 3166 alpha-2 code" >&2
+			exit 1
+		}
+		sed -i -E \
+			-e '/^extraargs=/s/ cfg80211\.ieee80211_regdom=[^ ]*//' \
+			-e "/^extraargs=/s/\$/ cfg80211.ieee80211_regdom=$cc/" \
+			/boot/armbianEnv.txt
+		iw reg set "$cc"
+	EOF
+}
+
+# =============================================================================
 # 5. the chroot pass: packages, the IMX708 module, the appliance cleanup, and
 #    an initramfs that can mount a btrfs root.
 # =============================================================================
@@ -359,6 +407,12 @@ chroot_pass() {
 			armbian-resize-filesystem.service
 		# The interactive first-login wizard keys off this file.
 		rm -f /root/.not_logged_in_yet
+
+		# -- The groups 99-fleet-devices.rules names, present before the first
+		#    boot's coldplug rather than created by cloud-init after it.
+		groupadd -f --system spi
+		groupadd -f --system i2c
+		groupadd -f --system gpio
 
 		# -- The timer list from the coordinator repo's
 		#    host/ansible/roles/no-scheduled-maintenance (see build-image.sh),
@@ -551,6 +605,8 @@ main() {
 	write_manifest
 	install_sudoers
 	install_module_blacklist
+	install_device_rules
+	install_wifi_country
 	chroot_pass
 	install_cloud_init_config
 	stage_boot
