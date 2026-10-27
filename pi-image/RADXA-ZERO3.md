@@ -239,6 +239,12 @@ does, because the board config switches every branch to it. The device tree is
 (measured). Inferred: with the kernel frozen in the image, DKMS is a build-time compile rather
 than a moving part on the device.
 
+The driver defaults to `custregd=1`, which registers the radio as self-managed with the
+driver's own permissive `00` table and ignores the kernel's regulatory domain. Measured on
+blackfly: `phy#0 (self-managed) country 00` (2380-2520 and 5140-5980 MHz, 20 dBm, no DFS)
+while the global domain read US. The image sets `options aic8800_fdrv custregd=0`, the
+driver's documented switch to the kernel's database, so `wifi-country` applies.
+
 ### What the conversion has to do
 
 The Pi conversion is `build-image.sh` plus `assemble-btrfs.sh`. Measured: the Armbian image is
@@ -270,7 +276,11 @@ stock U-Boot contains `fatload` and `ext4load` and the string `btrfs` zero times
    - **Our own `.dtso`** in `user_overlays=`: `pps-gpio` on `GPIO1_A4` with the falling edge,
      `dr_mode = "peripheral"` on `usb@fcc00000`, `fiq-debugger` disabled (step 6), and
    `gmac1` disabled: the 3W has no Ethernet, and with it enabled `end1` logs `Failed to
-   reset the dma` on every bring-up attempt (measured on blackfly). Inferred: the vendor dtb's `otg` with
+   reset the dma` on every bring-up attempt (measured on blackfly). Also `gpu` disabled (the
+   kernel's Mali driver is built for CSF GPUs and fails to probe the G52), and the SD slot
+   (`sdmmc0`) at 100 MHz: at 148.5 MHz SDR104 tuning failed with `All phases bad!` and the
+   card fell back to 50 MHz high speed (measured on blackfly; also reported in
+   [DietPi#8083](https://github.com/MichaIng/DietPi/issues/8083)). Inferred: the vendor dtb's `otg` with
      `extcon` would leave the role to cable detection, and the Pi campods pin it to
      peripheral.
 5. **Kernel command line,** via `extraargs`: root, and `cma=256M` kept. No `psi=1`: PSI is on

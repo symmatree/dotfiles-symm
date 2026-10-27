@@ -229,7 +229,15 @@ install_overlays() {
 		/fiq-debugger status disabled
 		/pps compatible pps-gpio
 		/spi@fe640000 status okay
+		/ethernet@fe010000 status disabled
+		/gpu@fde60000 status disabled
 	EOF
+	got="$(fdtget "$applied" /mmc@fe2b0000 max-frequency)"
+	[ "$got" = 100000000 ] || {
+		echo "!! /mmc@fe2b0000 max-frequency = $got, expected 100000000" >&2
+		exit 1
+	}
+	echo "   /mmc@fe2b0000 max-frequency = $got"
 	case " $USER_OVERLAYS " in
 	*" rampod-imx708 "*)
 		got="$(fdtget -t s "$applied" /i2c@fe5b0000/camera-imx708@1a compatible)"
@@ -297,7 +305,21 @@ install_device_rules() {
 # extraargs here, cmdline.txt there) so it holds from boot, and iw reg set for
 # the running kernel. user-data calls it once, at first boot, in place of
 # raspi-config, which Armbian does not have.
+#
+# The AIC8800 driver ignores both by default: custregd=1 registers the radio as
+# self-managed with the driver's own permissive "00" table (measured on
+# blackfly: phy#0 self-managed, country 00, while the global domain read US).
+# custregd=0 is the driver's documented switch to the kernel's regulatory
+# database (radxa-pkg/aic8800 rwnx_mod_params.c: "false: use crda(iw reg set
+# CN)").
 install_wifi_country() {
+	echo "== /etc/modprobe.d/aic8800.conf =="
+	mkdir -p "$ROOTFS/etc/modprobe.d"
+	cat >"$ROOTFS/etc/modprobe.d/aic8800.conf" <<-'EOF'
+		# Written by dotfiles-symm pi-image/build-rockchip.sh: follow the
+		# kernel's regulatory domain rather than the driver's own table.
+		options aic8800_fdrv custregd=0
+	EOF
 	echo "== /usr/local/sbin/wifi-country =="
 	install -D -m 0755 /dev/stdin "$ROOTFS/usr/local/sbin/wifi-country" <<-'EOF'
 		#!/bin/sh
