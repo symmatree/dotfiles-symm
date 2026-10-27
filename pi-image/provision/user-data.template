@@ -128,8 +128,10 @@ runcmd:
   - [nmcli, connection, reload]
   # The regulatory domain governs which channels the radio may use. The Zero 2 W
   # is 2.4 GHz only so the practical effect is small, but a GUI flash sets this
-  # and an unset domain is a silent difference between cards.
-  - [raspi-config, nonint, do_wifi_country, __WIFI_COUNTRY__]
+  # and an unset domain is a silent difference between cards. raspi-config on
+  # the Pi roles; the Rockchip image has no raspi-config and ships wifi-country
+  # (pi-image/build-rockchip.sh), which does the same two things.
+  - [sh, -c, 'if command -v raspi-config >/dev/null; then raspi-config nonint do_wifi_country __WIFI_COUNTRY__; else wifi-country __WIFI_COUNTRY__; fi']
 
 # NOT USED, deliberately: the `rpi:` key.
 #
