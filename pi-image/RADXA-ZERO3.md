@@ -207,8 +207,9 @@ libusb and need no kernel module (read). The OS-side requirements are the same e
 - **A udev rule** for vendor `1e10` (Point Grey / FLIR), so an unprivileged or containerised
   reader can open the device.
 
-Both are per-camera, so they belong to the converge for the unit that has the FLIR, not to
-every rampod image.
+The image sets `usbcore.usbfs_memory_mb=1000` in `extraargs` (`roles/rampod.env`), since
+it is only a cap. The udev rule is per-camera and belongs to the converge for the unit that
+has the FLIR.
 
 Which library to use is flight-platform's decision. Its OS consequences:
 
@@ -267,7 +268,9 @@ stock U-Boot contains `fatload` and `ext4load` and the string `btrfs` zero times
    - **Camera:** a per-unit overlay. The shipped `radxa-zero3-rpi-camera-v2` /
      `-v1.3` for IMX219 / OV5647; our own for IMX708.
    - **Our own `.dtso`** in `user_overlays=`: `pps-gpio` on `GPIO1_A4` with the falling edge,
-     `dr_mode = "peripheral"` on `usb@fcc00000`, and `fiq-debugger` disabled (step 6). Inferred: the vendor dtb's `otg` with
+     `dr_mode = "peripheral"` on `usb@fcc00000`, `fiq-debugger` disabled (step 6), and
+   `gmac1` disabled: the 3W has no Ethernet, and with it enabled `end1` logs `Failed to
+   reset the dma` on every bring-up attempt (measured on blackfly). Inferred: the vendor dtb's `otg` with
      `extcon` would leave the role to cable detection, and the Pi campods pin it to
      peripheral.
 5. **Kernel command line,** via `extraargs`: root, and `cma=256M` kept. No `psi=1`: PSI is on
