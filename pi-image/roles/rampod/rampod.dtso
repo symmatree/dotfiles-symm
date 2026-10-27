@@ -6,8 +6,8 @@
 // with dtc alone, no kernel tree. Each is named where it is used.
 //
 // Against the vendor kernel's rk3566-radxa-zero3.dtb (Armbian 6.1.115). Labels
-// (&usbdrd_dwc3, &fiq_debugger, &gmac1, &gpu, &sdmmc0, &gpio1, &pinctrl,
-// &pcfg_pull_none) are that
+// (&usbdrd_dwc3, &fiq_debugger, &gmac1, &gpu, &gpio1, &pinctrl, &pcfg_pull_none)
+// are that
 // tree's, read from its __symbols__.
 
 /dts-v1/;
@@ -17,7 +17,7 @@
 	metadata {
 		title = "rampod base";
 		compatible = "radxa,zero3";
-		description = "PPS on header pin 37, USB-C 1 as a gadget, no FIQ debugger on UART2, no Ethernet, no GPU, SD at 100 MHz.";
+		description = "PPS on header pin 37, USB-C 1 as a gadget, no FIQ debugger on UART2, no Ethernet, no GPU.";
 	};
 
 	// PPS on header pin 37, GPIO1_A4 -- the physical pin the Pi campods use.
@@ -90,18 +90,6 @@
 		target = <&gpu>;
 		__overlay__ {
 			status = "disabled";
-		};
-	};
-
-	// The SD slot (sdmmc0, mmc1) at 100 MHz rather than the base dtb's 150 MHz.
-	// At 148.5 MHz SDR104 tuning failed ("All phases bad!") and the card fell
-	// back to 50 MHz high speed (measured on blackfly); the same failure on this
-	// slot is reported in MichaIng/DietPi#8083. A trial: if tuning passes here,
-	// the margin at 150 MHz is the cause.
-	fragment@6 {
-		target = <&sdmmc0>;
-		__overlay__ {
-			max-frequency = <100000000>;
 		};
 	};
 };

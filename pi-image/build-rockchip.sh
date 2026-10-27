@@ -232,12 +232,6 @@ install_overlays() {
 		/ethernet@fe010000 status disabled
 		/gpu@fde60000 status disabled
 	EOF
-	got="$(fdtget "$applied" /mmc@fe2b0000 max-frequency)"
-	[ "$got" = 100000000 ] || {
-		echo "!! /mmc@fe2b0000 max-frequency = $got, expected 100000000" >&2
-		exit 1
-	}
-	echo "   /mmc@fe2b0000 max-frequency = $got"
 	case " $USER_OVERLAYS " in
 	*" rampod-imx708 "*)
 		got="$(fdtget -t s "$applied" /i2c@fe5b0000/camera-imx708@1a compatible)"
