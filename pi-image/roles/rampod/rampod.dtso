@@ -6,7 +6,7 @@
 // with dtc alone, no kernel tree. Each is named where it is used.
 //
 // Against the vendor kernel's rk3566-radxa-zero3.dtb (Armbian 6.1.115). Labels
-// (&usbdrd_dwc3, &fiq_debugger, &gpio1, &pinctrl, &pcfg_pull_none) are that
+// (&usbdrd_dwc3, &fiq_debugger, &gmac1, &gpio1, &pinctrl, &pcfg_pull_none) are that
 // tree's, read from its __symbols__.
 
 /dts-v1/;
@@ -16,7 +16,7 @@
 	metadata {
 		title = "rampod base";
 		compatible = "radxa,zero3";
-		description = "PPS on header pin 37, USB-C 1 as a gadget, no FIQ debugger on UART2.";
+		description = "PPS on header pin 37, USB-C 1 as a gadget, no FIQ debugger on UART2, no Ethernet.";
 	};
 
 	// PPS on header pin 37, GPIO1_A4 -- the physical pin the Pi campods use.
@@ -65,6 +65,16 @@
 	// turning the debugger off leaves no kernel driver on those pins.
 	fragment@3 {
 		target = <&fiq_debugger>;
+		__overlay__ {
+			status = "disabled";
+		};
+	};
+
+	// The Zero 3W has no Ethernet. The base dtb is shared with the Zero 3E and
+	// enables gmac1 (ethernet@fe010000); with no PHY behind it, every attempt
+	// to bring end1 up logs "Failed to reset the dma" (measured on blackfly).
+	fragment@4 {
+		target = <&gmac1>;
 		__overlay__ {
 			status = "disabled";
 		};
