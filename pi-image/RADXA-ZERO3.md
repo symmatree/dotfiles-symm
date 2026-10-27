@@ -277,10 +277,16 @@ stock U-Boot contains `fatload` and `ext4load` and the string `btrfs` zero times
      `dr_mode = "peripheral"` on `usb@fcc00000`, `fiq-debugger` disabled (step 6), and
    `gmac1` disabled: the 3W has no Ethernet, and with it enabled `end1` logs `Failed to
    reset the dma` on every bring-up attempt (measured on blackfly). Also `gpu` disabled (the
-   kernel's Mali driver is built for CSF GPUs and fails to probe the G52), and the SD slot
-   (`sdmmc0`) at 100 MHz: at 148.5 MHz SDR104 tuning failed with `All phases bad!` and the
-   card fell back to 50 MHz high speed (measured on blackfly; also reported in
-   [DietPi#8083](https://github.com/MichaIng/DietPi/issues/8083)). Inferred: the vendor dtb's `otg` with
+   kernel's Mali driver is built for CSF GPUs and fails to probe the G52).
+
+   **SD clock.** Measured on blackfly: at 148.5 MHz SDR104 tuning failed with `All phases
+   bad!` and the card fell back to 50 MHz high speed (the same failure on this slot is in
+   [DietPi#8083](https://github.com/MichaIng/DietPi/issues/8083), card-dependent there). The
+   card clock is half of `clk_sdmmc0`, whose parents are `xin24m`, `gpll_400m`,
+   `gpll_300m`, `cpll_100m`, `cpll_50m` and `clk_osc0_div_750k`, so the reachable card
+   clocks are about 200, 148.5 and 50 MHz. A 100 MHz `max-frequency` was tried: it gave
+   SDR104 timing at a 50 MHz card clock, no faster than the fallback, so the base dtb's 150
+   MHz stands. Inferred: the vendor dtb's `otg` with
      `extcon` would leave the role to cable detection, and the Pi campods pin it to
      peripheral.
 5. **Kernel command line,** via `extraargs`: root, and `cma=256M` kept. No `psi=1`: PSI is on
