@@ -190,10 +190,11 @@ U6's CC pins go to J9, its `INT#` to `TYPEC_INT` with a 2.2k pull-up, and nothin
 Inferred: `GPIO0_C5` is `USB3.0_EN_H` (from the dtsi's `sel-gpios`; the schematic's text
 extraction does not give the ball). On both kernels nothing sets it from the detected
 orientation, so `SEL` stays at 1 (SW2) unless the pin comes out of reset driven high, and only
-one plug orientation gets SuperSpeed -- which is the forum's symptom. Two ways out: drive `GPIO0_C5` from the polarity the CC controller reports
-(a small kernel or userspace hook), or fix the plug orientation physically, which a captive
-cable in an airframe may already do. The camera plugs in directly, so the hub half may not
-apply; `lsusb -t` names the speed, so it is the first thing to check on the bench.
+one plug orientation gets SuperSpeed -- which is the forum's symptom. The other way out would
+be driving `GPIO0_C5` from the polarity the CC controller reports (a kernel or userspace hook).
+The current plan is to fix the plug orientation physically. The camera plugs in directly, so
+the hub half may not apply. `lsusb -t` names the speed: `5000M` against the camera is the
+right way round, `480M` is flipped.
 
 **Camera software, as it touches this layer.** Both stacks reach the camera through usbfs via
 libusb and need no kernel module (read). The OS-side requirements are the same either way:
