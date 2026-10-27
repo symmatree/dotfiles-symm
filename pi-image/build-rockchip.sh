@@ -442,6 +442,13 @@ chroot_pass() {
 		# Armbian's cron jobs (armbian-updates, -truncate-logs, -check-battery).
 		systemctl mask cron.service
 
+		# -- No Bluetooth. The board-support package loads the AIC8800's
+		#    Bluetooth driver and the BT protocol modules at boot
+		#    (modules-load.d/aic8800-btlpm.conf), and aic-bluetooth.service
+		#    unblocks rfkill and attaches the radio under bluez.
+		rm -f /etc/modules-load.d/aic8800-btlpm.conf
+		systemctl mask aic-bluetooth.service bluetooth.service
+
 		# -- Credentials. The image ships root with a password and root SSH on,
 		#    and every card would share its pre-generated host keys. Lock root,
 		#    turn root SSH off, and delete the keys: cloud-init's ssh module
