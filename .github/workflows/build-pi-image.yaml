@@ -25,7 +25,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        role: ["coordinator", "campod", "pocketterm", "rampod"]
+        role: ["coordinator", "campod", "pocketterm", "blackfly"]
     steps:
       - uses: "actions/checkout@v6"
 
@@ -66,8 +66,8 @@ jobs:
       - name: "Upload image artifact"
         uses: "actions/upload-artifact@v4"
         with:
-          # rampod is a Radxa image (build-rockchip.sh), and named for it.
-          name: "${{ matrix.role }}-${{ matrix.role == 'rampod' && 'radxa' || 'pi' }}-btrfs-img"
+          # blackfly is a Radxa image (build-rockchip.sh), and named for it.
+          name: "${{ matrix.role }}-${{ matrix.role == 'blackfly' && 'radxa' || 'pi' }}-btrfs-img"
           path: "pi-image/.build/${{ matrix.role }}-*.img"
           if-no-files-found: "error"
           include-hidden-files: true
