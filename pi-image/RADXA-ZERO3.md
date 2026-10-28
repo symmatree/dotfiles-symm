@@ -1,19 +1,18 @@
-# rampod: Radxa Zero 3W camera pod, plan
+# Radxa Zero 3W
 
-A plan for adding **rampod**, a role that does a campod's job on a Radxa Zero 3W (RK3566,
-2 GB). The name is Seth's, 2026-10-21, to keep it distinct from the Pi Zero 2 W campods. The
-first rampod carries a USB3 camera, the FLIR Blackfly S BFS-U3-244S8M-C. Later rampods carry
-Pi-style MIPI ribbon-cable modules (most likely Arducam IMX708; Seth has several kinds and may
-try more than one), for the vertical ring, since more Pi Zero 2 Ws are not available. So the
-camera is a per-unit fact, not a property of the role. Written 2026-10-21, before any board
-has arrived. Nothing here has run on hardware.
-
-**Superseded on the role, 2026-10-28:** the camera is baked into the image (overlays, the
-FLIR's USB settings), and one image runs one stack, so the role is board plus payload, as
-campod and coordinator are. The FLIR unit's role is `blackfly` (`roles/blackfly.env`, the
-coordinator repo's `stacks/blackfly`, `DATA_MOUNT=/var/lib/blackfly`). An IMX708 Radxa unit
-would be another role. "rampod" remains the name of the Radxa board support: `build-rockchip.sh`
-and the `rampod` base overlay.
+The board (RK3566, 2 GB): its ports, header, kernel and the OS image this repo builds for it,
+and what on it does or does not work as documented. **rampod** is the name of the board
+support (`build-rockchip.sh` and the `rampod` base overlay; Seth, 2026-10-21, to keep it
+distinct from the Pi Zero 2 W campods). A role is board plus payload, as campod and coordinator
+are, because the camera is baked into the image and one image runs one stack. The FLIR unit's
+role is **blackfly** (`roles/blackfly.env`, `DATA_MOUNT=/var/lib/blackfly`); how that pod is
+put together is in coordinator's
+[docs/blackfly.md](https://github.com/symmatree/coordinator/blob/main/docs/blackfly.md), and
+the camera in
+[docs/rekon10/flir-blackfly-s.md](https://github.com/symmatree/coordinator/blob/main/docs/rekon10/flir-blackfly-s.md).
+A Radxa unit with a Pi-style MIPI module (most likely Arducam IMX708) would be another role.
+Written first on 2026-10-21 as a plan before any board arrived; facts measured on blackfly
+since then say so.
 
 Every fact is labelled. **Read** means a source was opened and the line is cited.
 **Measured** means bytes were parsed: the published Armbian images were downloaded,
@@ -27,8 +26,7 @@ and convert it the way `build-image.sh` converts Raspberry Pi OS. Keep the vendo
 bytes. Re-lay the root into the same btrfs subvolume graph. Put `/boot` on a FAT partition so
 the flash-time cloud-init seed works unchanged. Then converge with the same playbooks, behind
 a hardware knob. The requirements are the gadget network, PPS and the camera; the rest is
-settled as it comes up. The pod's physical wiring stays as it is, except for the FLIR's
-power. A rampod has one ADXL345, on CS0.
+settled as it comes up. A rampod has one ADXL345, on CS0.
 
 ## Kernel: vendor
 
@@ -45,7 +43,7 @@ cameras. Measured from the two published images' `/boot/config-*`:
 
 Mainline has sensor drivers but no capture or ISP driver for this chip, so no MIPI module
 works on it. The vendor kernel has both, and the board's camera pipeline is in its device tree
-(below). It also avoids the mainline-only half of the USB3 defect described under the FLIR.
+(below). It also avoids the mainline-only half of the USB3 defect described under the USB3 port.
 The cost: it is Rockchip's 6.1 tree, so its device-tree node names and spidev compatible
 (`rockchip,spidev`) are vendor-shaped, and upstream fixes reach it later (inferred).
 
@@ -141,31 +139,19 @@ Aug-Sep 2026, on a Zero 3W:
 Inferred: none of this is libcamera / picamera2, which today's campod `capture.py` is built
 on, so the capture code does not carry over as is. The replacement is flight-platform's.
 
-## The FLIR camera
+## The USB3 port (J9)
 
-Read, [FLIR spec page](http://softwareservices.flir.com/BFS-U3-244S8/latest/Model/spec.html):
-
-- Sony IMX540, mono, 5320 x 4600 pixels.
-- 15 fps at full resolution, against a 380 MB/s link limit.
-- 240 MB of on-camera buffer.
-- Power: **8-24 V via GPIO or 5 V via USB, 4.2 W maximum.**
-
-Inferred arithmetic: a full frame is 24.5 MB at Mono8 and 36.7 MB at Mono12p.
-
-**Power.** 4.2 W at 5 V is about 840 mA. Read, schematic sheet 17: J9's 5 V comes from
-`VCC_SYS` through an SY6280AAC load switch with its enable pulled high, so it is always on.
-flight-hardware read its current-limit resistor as 4.7k, which with the datasheet's
-Ilim = 6800/Rset gives about 1.45 A nominal (their reading; the datasheet formula was not
-opened here). The "500mA" in Radxa's product brief, earlier taken here from a search snippet,
-is the USB 3.0 spec figure, not this switch's setting (flight-hardware). A
+**Power.** Read, schematic sheet 17: J9's 5 V comes from `VCC_SYS` through an **SY6280AAC**
+load switch with its enable pulled high, so it is always on, and a 4.7 kOhm set resistor. The
+[datasheet](https://olimex.com/Products/Components/IC/SY6280/resources/SY6280AAC.PDF) gives
+`Ilim = 6800 / Rset`, so about **1.45 A** nominal; at its +/-25 % on the 1 A point, roughly
+1.1-1.8 A. The "500 mA" in Radxa's
+[product brief](https://dl2.radxa.com/zero3/docs/hw/3w/radxa_zero_3w_product_brief.pdf) is the
+USB 3.0 specification figure, not this setting. A
 [forum user](https://forum.radxa.com/t/radxa-zero-3e-increase-500ma-for-usb3/26956) reported
 being unable to raise a 500 mA limit; that thread was not re-read against the schematic.
-Inferred: whatever the camera draws at 5 V over J9 comes off `VCC_SYS`, so off the same
-`+5V_INPUT` as the board, through the coordinator hub's lead to J2. FLIR's
-[ARM note](https://www.teledynevisionsolutions.com/support/support-center/application-note/iis/using-spinnaker-on-arm-and-embedded-systems/)
-lists insufficient bus power as a known failure. Inferred: the camera gets its own supply on
-VAUX (Hirose pin 1, 8-24 V). That is flight-hardware's call, and so is whether its draw then
-comes off the coordinator's hub at all.
+Whatever a device draws from J9 comes off `VCC_SYS`, so off the same `+5V_INPUT` as the board
+and through whatever feeds J2 (sheets 20, 22).
 
 **The USB3 port has a reported kernel defect.** Read,
 [Armbian forum, Aug-Nov 2025](https://forum.armbian.com/topic/54531-usb3-port-issues-on-radxa-zero-3-armbian-vs-vendor-builds-usb-hub-fails-upside-down-speed-bug/):
@@ -199,39 +185,16 @@ extraction does not give the ball). On both kernels nothing sets it from the det
 orientation, so `SEL` stays at 1 (SW2) unless the pin comes out of reset driven high, and only
 one plug orientation gets SuperSpeed -- which is the forum's symptom. The other way out would
 be driving `GPIO0_C5` from the polarity the CC controller reports (a kernel or userspace hook).
-The current plan is to fix the plug orientation physically. The camera plugs in directly, so
-the hub half may not apply. `lsusb -t` names the speed: `5000M` against the camera is the
-right way round, `480M` is flipped.
+`lsusb -t` names the speed: `5000M` is SuperSpeed, `480M` is not.
 
-**Camera software, as it touches this layer.** Both stacks reach the camera through usbfs via
-libusb and need no kernel module (read). The OS-side requirements are the same either way:
+Measured on blackfly, 2026-10-27, with a USB3 camera on J9 through a USB-C splitter cable:
+`/sys/class/typec/port0` (the fusb302 at `3-0022`) read `orientation: unknown` with no
+`port0-partner`, and the camera enumerated at `480M` in both plug orientations.
 
-- **`usbcore.usbfs_memory_mb`.** The default is 16 (read, `drivers/usb/core/devio.c`). FLIR
-  recommends 1000
-  ([usbfs note](https://www.teledynevisionsolutions.com/support/support-center/application-note/iis/understanding-usbfs-on-linux/)).
-  Inferred: it is a cap, not a reservation; what is actually used is buffer count times frame
-  size.
-- **A udev rule** for vendor `1e10` (Point Grey / FLIR), so an unprivileged or containerised
-  reader can open the device.
-
-The image sets `usbcore.usbfs_memory_mb=1000` in `extraargs` (`roles/blackfly.env`), since
-it is only a cap. The udev rule is per-camera and belongs to the converge for the unit that
-has the FLIR.
-
-Which library to use is flight-platform's decision. Its OS consequences:
-
-- **Aravis** is LGPL. Debian trixie ships 0.8.34 (`libaravis-0.8-0`, `gir1.2-aravis-0.8`,
-  `aravis-tools-cli`), installable from the same archive as everything else, and Python reaches
-  it through GObject introspection (read). The Debian package ships no udev rule; upstream's
-  `aravis.rules` matches the USB3 Vision interface class (read).
-- **Spinnaker** publishes arm64 builds for Ubuntu 20.04, 22.04 and 24.04 only (read). The
-  downloads are login-gated. Its redistribution terms and an arm64 PySpin wheel were not found.
-  Inferred: it would live in an Ubuntu-based container rather than on the Debian host.
-
-**What it means for the card.** Inferred: one Mono8 frame per second is 24.5 MB/s of writes,
-against 1.6 MB/s measured for today's campod capture and the 19 MB/s import that drove a
-Zero 2 W card to 92% utilisation. Whether frames are compressed before they land is the
-payload's choice; the write rate is the number this layer has to plan the filesystem around.
+**usbfs.** The default `usbcore.usbfs_memory_mb` is 16 (read, `drivers/usb/core/devio.c`), a
+cap on usbfs transfer memory, not a reservation. `roles/blackfly.env` raises it to 1000 in
+`extraargs` for the FLIR on blackfly
+([docs/blackfly.md](https://github.com/symmatree/coordinator/blob/main/docs/blackfly.md)).
 
 ## The OS image
 
@@ -380,11 +343,11 @@ board difference as a knob rather than a copy. Read: the MAC derivation hashes t
 
 ## Decisions that are not this layer's
 
-- **FLIR power** (VAUX supply, or 5 V over J9 at the load switch's ~1.45 A): flight-hardware.
+- **The FLIR's power and capture software:** in coordinator's
+  [docs/blackfly.md](https://github.com/symmatree/coordinator/blob/main/docs/blackfly.md).
 - **USB3 orientation** (drive the mux select, or fix the plug orientation): open.
-- **Capture software** for both camera kinds (Aravis or Spinnaker for the FLIR; the Rockchip
-  ISP path for the MIPI modules), and pixel format and compression, which set the write rate:
-  flight-platform.
+- **Capture software for the MIPI modules** (the Rockchip ISP path), and pixel format and
+  compression, which set the write rate: flight-platform.
 - **Which MIPI modules the later rampods carry:** Seth, by trying them. Each one is a sensor
   driver that the vendor kernel builds or not (the table above) plus an overlay.
 - **rampod hostnames and bus topics:** the name is settled; the hostname scheme and topic
