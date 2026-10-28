@@ -8,6 +8,13 @@ try more than one), for the vertical ring, since more Pi Zero 2 Ws are not avail
 camera is a per-unit fact, not a property of the role. Written 2026-10-21, before any board
 has arrived. Nothing here has run on hardware.
 
+**Superseded on the role, 2026-10-28:** the camera is baked into the image (overlays, the
+FLIR's USB settings), and one image runs one stack, so the role is board plus payload, as
+campod and coordinator are. The FLIR unit's role is `blackfly` (`roles/blackfly.env`, the
+coordinator repo's `stacks/blackfly`, `DATA_MOUNT=/var/lib/blackfly`). An IMX708 Radxa unit
+would be another role. "rampod" remains the name of the Radxa board support: `build-rockchip.sh`
+and the `rampod` base overlay.
+
 Every fact is labelled. **Read** means a source was opened and the line is cited.
 **Measured** means bytes were parsed: the published Armbian images were downloaded,
 checksum-verified and inspected offline, and nothing from them was executed. **Inferred** is
@@ -207,7 +214,7 @@ libusb and need no kernel module (read). The OS-side requirements are the same e
 - **A udev rule** for vendor `1e10` (Point Grey / FLIR), so an unprivileged or containerised
   reader can open the device.
 
-The image sets `usbcore.usbfs_memory_mb=1000` in `extraargs` (`roles/rampod.env`), since
+The image sets `usbcore.usbfs_memory_mb=1000` in `extraargs` (`roles/blackfly.env`), since
 it is only a cap. The udev rule is per-camera and belongs to the converge for the unit that
 has the FLIR.
 
