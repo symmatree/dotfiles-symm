@@ -391,6 +391,15 @@
       shell: chmod -R o+rx /opt/playwright-browsers
       when: install_notebook_tools
 
+    # Brew installs the mikefarah yq below, but a host provisioned before that
+    # existed can still carry apt's python-yq, which then answers for `yq`
+    # wherever brew's bin is not ahead of /usr/bin. Remove it: `yq` on these
+    # boxes means the mikefarah build or nothing.
+    - name: Remove the apt yq (python-yq)
+      apt:
+        name: yq
+        state: absent
+
     - name: Install Homebrew packages
       become: false
       community.general.homebrew:
