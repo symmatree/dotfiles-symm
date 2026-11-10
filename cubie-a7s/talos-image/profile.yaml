@@ -1,0 +1,22 @@
+arch: arm64
+platform: metal
+secureboot: false
+version: v1.14.5
+input:
+  kernel:
+    path: /work/vmlinuz
+  initramfs:
+    path: /work/initramfs-arm64.xz
+  baseInstaller:
+    imageRef: ghcr.io/siderolabs/installer-base:v1.14.5
+overlay:
+  name: cubie_a7s
+  image:
+    ociPath: /work/cubie-overlay-oci
+output:
+  kind: image
+  outFormat: .xz
+  imageOptions:
+    diskSize: 1322254336
+    diskFormat: raw
+    bootloader: grub
