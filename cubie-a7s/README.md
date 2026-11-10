@@ -87,6 +87,17 @@ docker run --rm -i --privileged -v /dev:/dev -v $HOME/imgwork:/work:ro -v $HOME/
 
 The output, `metal-arm64.raw.xz`, is flashed to the card as-is.
 
+Each board's image also carries its address, since the board's MAC is random per boot
+and there is no DHCP reservation (tiles `docs/bare-metal-nodes.md#cubie-a7s-static-address`).
+Add to `profile.yaml`, with the board's address and name:
+
+```yaml
+customization:
+  extraKernelArgs:
+    - net.ifnames=0
+    - ip=<ip>::10.0.0.1:255.255.0.0:<name>:eth0:off:10.0.99.1::10.0.99.1
+```
+
 ## Debian test card (`test-card/`)
 
 `mkimg.sh` turns DockSeed's `a7s-trixie-minimal` image into a card that boots the Talos
