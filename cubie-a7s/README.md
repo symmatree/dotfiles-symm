@@ -53,6 +53,40 @@ docker buildx build --platform linux/arm64 --provenance=false --sbom=false \
   --output type=oci,dest=../cubie-overlay-oci,tar=false .
 ```
 
+## Talos image (`talos-image/`)
+
+The kernel build's output becomes the kernel image Talos's build takes, with no
+recompile:
+
+```sh
+mkdir kimg && tar -I zstd -xf kernel.tar.zst -C kimg   # kernel/{boot,dtb,usr,...}
+printf 'FROM scratch\nCOPY kernel/ /\n' > kimg/Dockerfile
+docker buildx build --platform linux/arm64 --provenance=false --sbom=false \
+  --output type=oci,dest=$HOME/cubie-kernel-oci,tar=false kimg
+```
+
+The initramfs comes from an unmodified [siderolabs/talos](https://github.com/siderolabs/talos)
+checkout at the release tag, with that image passed in as a named build context:
+
+```sh
+make initramfs PLATFORM=linux/arm64 PKG_KERNEL=cubie-kernel PROGRESS=plain \
+  TARGET_ARGS="--build-context cubie-kernel=oci-layout://$HOME/cubie-kernel-oci@<manifest digest>"
+```
+
+Only the modules in Talos's `hack/modules-arm64.txt` go into the initramfs; the
+Cubie's ethernet modules are on it, its USB hub and USB-C controller modules are not.
+
+The disk image is Sidero's imager for the same release. `profile.yaml` expects
+`/work/vmlinuz` (the kernel build's `boot/vmlinuz`), `/work/initramfs-arm64.xz` and
+`/work/cubie-overlay-oci`:
+
+```sh
+docker run --rm -i --privileged -v /dev:/dev -v $HOME/imgwork:/work:ro -v $HOME/imgout:/out \
+  ghcr.io/siderolabs/imager:v1.14.5 - < profile.yaml
+```
+
+The output, `metal-arm64.raw.xz`, is flashed to the card as-is.
+
 ## Debian test card (`test-card/`)
 
 `mkimg.sh` turns DockSeed's `a7s-trixie-minimal` image into a card that boots the Talos
