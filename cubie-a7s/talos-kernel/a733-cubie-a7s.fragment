@@ -1,0 +1,37 @@
+# A733 / Cubie A7S options added to Talos's kernel/build/config-arm64
+# (siderolabs/pkgs f4bda77, Linux 6.18.58), on top of the DockSeed a7s-linux-lts
+# series d1176934016f. Every symbol below is enabled in DockSeed's
+# kernel/6.18/config and absent from Talos's config.
+# Symbols the series adds that already default on with Talos's config:
+# PINCTRL_SUN60I_A733(_R), SUN60I_A733_{,CPU_,R_,RTC_,SERDES_}CCU, MMC_HSQ.
+
+# PMIC (AXP318W on I2C): regulators for MMC, PCIe, USB
+CONFIG_MFD_AXP20X_I2C=y
+# power domains (PCK600)
+CONFIG_SUN20I_PPU=y
+# IOMMU
+CONFIG_SUN60I_IOMMU=y
+# GbE PHY (MaxIO MAE0621A)
+CONFIG_MAXIO_PHY=y
+# PCIe 3.0 x1 (FPC connector, NVMe)
+CONFIG_PCIE_SUN60I_A733=y
+CONFIG_PHY_SUN60I_A733_PCIE_COMBO=y
+# USB PHYs (USB2 companion, USB3/DP combo PHY)
+CONFIG_PHY_SUN60I_A733_USB2=y
+CONFIG_PHY_SUN60I_A733_COMBO=y
+# on-board CH334 USB hub (USB-A port), USB-C port controller (HUSB311 / RT1711H)
+CONFIG_USB_ONBOARD_DEV=m
+CONFIG_TYPEC_TCPM=m
+CONFIG_TYPEC_TCPCI=m
+CONFIG_TYPEC_RT1711H=m
+# PWM (J7 fan header)
+CONFIG_PWM_SUN60I_A733=y
+# thermal: idle-injection cooling devices on the CPU zones (the zones use step_wise)
+CONFIG_IDLE_INJECT=y
+CONFIG_CPU_IDLE_THERMAL=y
+# DSU (L3 / cluster interconnect) frequency scaling
+CONFIG_ARM_SUN60I_A733_DSU_DEVFREQ=y
+
+# Left at Talos's default (not set): ENERGY_MODEL. DockSeed enables it so that
+# Energy Aware Scheduling runs on the 6x A55 + 2x A76 split; it is a scheduler
+# policy choice, not a driver.
