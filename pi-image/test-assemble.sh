@@ -12,7 +12,7 @@
 # Run: sudo ./test-assemble.sh   (needs losetup + mkfs.btrfs)
 #
 # shellcheck disable=SC2015  # intentional `cond && pass || fail` assertion idiom (both just echo)
-# shellcheck disable=SC2317  # cleanup() is reached indirectly via `trap ... EXIT`
+# shellcheck disable=SC2317,SC2329  # cleanup() is reached indirectly via `trap ... EXIT`
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
