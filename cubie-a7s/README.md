@@ -98,6 +98,15 @@ customization:
     - ip=<ip>::10.0.0.1:255.255.0.0:<name>:eth0:off:10.0.99.1::10.0.99.1
 ```
 
+`set-node.py` makes another board's image from one that already has the argument,
+without the imager: it rewrites the address and hostname in grub.cfg in place,
+padded to the same length, and refuses an address or name longer than the source's.
+
+```sh
+xz -dc talos-image-v1.14.5-r1-cubie-1/metal-arm64.raw.xz > cubie-1.raw
+./set-node.py cubie-1.raw marino.raw 10.0.128.15 marino
+```
+
 ## Debian test card (`test-card/`)
 
 `mkimg.sh` turns DockSeed's `a7s-trixie-minimal` image into a card that boots the Talos
