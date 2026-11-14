@@ -396,6 +396,9 @@
       community.general.homebrew:
         # No first-party DEB822/repo for these: use brew, or swap to pinned release tarballs / go install later.
         name:
+          # Argo Workflows CLI (`argo submit`, `argo logs`), for workflows such as
+          # tiles' mapping-sim.
+          - argo
           - argocd
           - cilium-cli
           - go-jsonnet
