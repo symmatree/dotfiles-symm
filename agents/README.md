@@ -56,4 +56,24 @@ role <home-repo>/<role> [claude args...]   # e.g. role tiles/renovate --continue
 4. Runs `claude` in the workspace under `flock`, so a second launch of the role
    exits while one is running.
 
-`ubuntu-zsh/install.sh` links `role` into `~/.local/bin`.
+## `role-tmux`
+
+```bash
+role-tmux <home-repo>/<role> [claude args...]   # e.g. role-tmux tiles/renovate --continue
+```
+
+Runs `role` in a new detached tmux session, `role-<role>`, with
+`--remote-control <role>`, so a session can be started from another session or from
+the phone and then reached through claude.ai or the Claude app. The tmux session
+belongs to the tmux server, not to the caller. It prints the Remote Control URL once
+claude is up, or what `role` printed if it stopped first. tmux refuses a second
+`role-<role>` session.
+
+Claude asks before trusting a new folder, and in a detached session nothing can
+answer. Trust covers subfolders, so `~/roles` is trusted once and every workspace
+under it inherits that.
+
+A new role is a role package merged to its home repo's `main`; `role` reads only
+`main`.
+
+`ubuntu-zsh/install.sh` links `role` and `role-tmux` into `~/.local/bin`.

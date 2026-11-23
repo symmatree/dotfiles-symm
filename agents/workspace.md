@@ -18,3 +18,6 @@ yours alone.
   repo. Read it at the start of a session; update it at the end, as a PR.
 - **Memory** for this role is `memory/` here. It is local to this machine and not
   committed.
+- **Starting another role.** When Seth asks, `role-tmux <home-repo>/<role>` starts it
+  in its own tmux session and prints its Remote Control URL; add `--continue` to
+  resume its last session.
