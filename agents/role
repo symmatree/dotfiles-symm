@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+# role <home-repo>/<role> [claude args...]
+#
+# Launch the Claude session for one role in its workspace, ~/roles/<role>.
+# Layout and the role package are described in agents/README.md.
+set -euo pipefail
+
+usage() {
+	echo "usage: role <home-repo>/<role> [claude args...]" >&2
+	exit 2
+}
+
+[ $# -ge 1 ] || usage
+spec=$1
+shift
+home_repo=${spec%%/*}
+role=${spec#*/}
+if [ -z "$home_repo" ] || [ -z "$role" ] || [ "$home_repo" = "$spec" ]; then
+	usage
+fi
+
+owner=symmatree
+ws=$HOME/roles/$role
+mkdir -p "$ws"
+
+clone_if_missing() {
+	[ -d "$ws/$1/.git" ] || git clone "https://github.com/$owner/$1.git" "$ws/$1"
+}
+
+# Switch to main and fast-forward it. Refuses only when that cannot be done
+# without carrying or losing work: uncommitted changes (untracked files included),
+# or a local main that has diverged from origin.
+sync_main() {
+	local r=$ws/$1
+	if [ -n "$(git -C "$r" status --porcelain)" ]; then
+		echo "role: $r has uncommitted changes:" >&2
+		git -C "$r" status --short >&2
+		return 1
+	fi
+	git -C "$r" checkout -q main
+	git -C "$r" pull -q --ff-only
+}
+
+clone_if_missing "$home_repo"
+sync_main "$home_repo"
+
+pkg_dir=$ws/$home_repo/agents
+[ -d "$pkg_dir/$role" ] || {
+	echo "role: no $home_repo/agents/$role" >&2
+	exit 1
+}
+
+# dotfiles-symm carries the shared workspace guidance, so every role has it.
+mapfile -t repos < <(grep -v -E '^\s*(#|$)' "$pkg_dir/$role/repos")
+failed=0
+for r in dotfiles-symm "${repos[@]}"; do
+	[ "$r" = "$home_repo" ] && continue
+	clone_if_missing "$r"
+	sync_main "$r" || failed=1
+done
+[ "$failed" = 0 ] || exit 1
+
+stow --no-folding --ignore='^repos$' -d "$pkg_dir" -t "$ws" -R "$role"
+
+# One session per role at a time. flock holds the lock and waits for claude;
+# -o keeps the lock fd out of claude and everything it starts.
+cd "$ws"
+rc=0
+flock -n -E 75 -o .lock claude "$@" || rc=$?
+[ "$rc" != 75 ] || echo "role: $role is already running ($ws/.lock is held)" >&2
+exit "$rc"

@@ -13,6 +13,10 @@ for d in */; do
 	(stow --dotfiles -t "${HOME}" -S "$d")
 done
 
+# A plain link rather than stow: stow 2.3.1 --dotfiles folds dot-local into one symlink.
+mkdir -p "$HOME/.local/bin"
+ln -sfn "$(dirname "$SAVE_DIR")/agents/role" "$HOME/.local/bin/role"
+
 cd "${SAVE_DIR}/etc"
 echo "Stowing sudoers.d"
 sudo stow --target /etc/sudoers.d -v -S sudoers.d
