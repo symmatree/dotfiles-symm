@@ -15,7 +15,9 @@ done
 
 # A plain link rather than stow: stow 2.3.1 --dotfiles folds dot-local into one symlink.
 mkdir -p "$HOME/.local/bin"
-ln -sfn "$(dirname "$SAVE_DIR")/agents/role" "$HOME/.local/bin/role"
+for f in role role-tmux; do
+	ln -sfn "$(dirname "$SAVE_DIR")/agents/$f" "$HOME/.local/bin/$f"
+done
 
 cd "${SAVE_DIR}/etc"
 echo "Stowing sudoers.d"
