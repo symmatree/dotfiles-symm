@@ -38,7 +38,7 @@ Packages on `main`, in each repo that has an `agents/` directory:
 
 ```bash
 for r in $(gh repo list symmatree --no-archived --json name -q '.[].name'); do
-  gh api "repos/symmatree/$r/contents/agents" -q ".[] | select(.type==\"dir\") | \"$r/\" + .name" 2>/dev/null
+  out=$(gh api "repos/symmatree/$r/contents/agents" -q ".[] | select(.type==\"dir\") | \"$r/\" + .name" 2>/dev/null) && echo "$out"
 done
 ```
 
