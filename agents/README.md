@@ -76,4 +76,10 @@ under it inherits that.
 A new role is a role package merged to its home repo's `main`; `role` reads only
 `main`.
 
-`ubuntu-zsh/install.sh` links `role` and `role-tmux` into `~/.local/bin`.
+## `roles` skill
+
+`skills/roles/SKILL.md` tells any Claude session on the machine how to start, resume,
+find and create roles.
+
+`ubuntu-zsh/install.sh` links `role` and `role-tmux` into `~/.local/bin`, and the
+skill into `~/.claude/skills/roles`.

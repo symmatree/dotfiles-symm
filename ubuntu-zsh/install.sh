@@ -18,6 +18,8 @@ mkdir -p "$HOME/.local/bin"
 for f in role role-tmux; do
 	ln -sfn "$(dirname "$SAVE_DIR")/agents/$f" "$HOME/.local/bin/$f"
 done
+mkdir -p "$HOME/.claude/skills"
+ln -sfn "$(dirname "$SAVE_DIR")/agents/skills/roles" "$HOME/.claude/skills/roles"
 
 cd "${SAVE_DIR}/etc"
 echo "Stowing sudoers.d"
