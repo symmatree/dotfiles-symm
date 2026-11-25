@@ -44,6 +44,8 @@ in fables. ASCII only (straight quotes, `--` for em-dash).
 - Test on the real path: build the intended setup and fix what breaks. A side
   experiment needs a stated thing it teaches that the real path cannot.
 - Render-diff anything with a compile step, and account for the whole diff.
+- Push to start CI first. Run a local check alongside it, or to settle an ambiguity or
+  something that may really fail -- never as a serial gate that doubles Seth's wait.
 - After a change lands, confirm it worked where it runs before calling it done.
 
 ## Scope of action -- [conduct/scope.md](conduct/scope.md)

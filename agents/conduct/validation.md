@@ -52,3 +52,15 @@ end up with, unless there's a specific thing we can learn better that way."
 Instead: name the end state and take the shortest path to it -- the actual image,
 joined as the actual worker -- and fix what breaks there. Name a risk as "this is
 where it could break, and we will see it when we get there".
+
+## Do not run CI's checks serially before CI
+
+Mid-outage, Seth asked for memory requests on the oauth2-proxies -- two lines of
+YAML. The agent ran tiles' full `render-apps-diff.sh` locally before pushing, which
+renders every Application for both clusters twice, and Seth waited minutes for output
+the `render-diff` workflow posts on the PR anyway. The instruction to run it locally
+had been agent-written; Seth had it changed (tiles#955).
+
+Instead: commit and push so CI starts, then run whatever local check helps while it
+runs. Run one first only when its answer changes what you push. Say before starting
+anything that takes more than a few seconds.
