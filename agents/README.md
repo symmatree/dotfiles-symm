@@ -131,3 +131,13 @@ Once per role workspace, before or at its first start:
 
 `role-tmux` names each session after its role. When a session is full, Seth exports
 its transcript and renames it `saved-<role>`, so `<role>` is always the live one.
+## Conduct
+
+`conduct.md` is how to work with Seth, in every session on the machine, role or not:
+`~/.claude/CLAUDE.md`, the user-level file Claude loads for every session, is a link
+to it. Each rule is a line or two; the incidents behind each section are in
+`conduct/`, read on demand. A repo's own `CLAUDE.md` or `AGENTS.md` holds only what
+is particular to that repo.
+
+`ubuntu-zsh/install.sh` links `role` and `role-tmux` into `~/.local/bin`, the
+skill into `~/.claude/skills/roles`, and `conduct.md` to `~/.claude/CLAUDE.md`.
