@@ -20,6 +20,7 @@ for f in role role-tmux; do
 done
 mkdir -p "$HOME/.claude/skills"
 ln -sfn "$(dirname "$SAVE_DIR")/agents/skills/roles" "$HOME/.claude/skills/roles"
+ln -sfn "$(dirname "$SAVE_DIR")/agents/conduct.md" "$HOME/.claude/CLAUDE.md"
 
 cd "${SAVE_DIR}/etc"
 echo "Stowing sudoers.d"
