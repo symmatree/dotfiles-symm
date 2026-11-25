@@ -8,8 +8,8 @@ yours alone.
 - **Work in these checkouts.** Branch in place; do not create worktrees and do not
   work in `~/tiles`, `~/coordinator` or other shared checkouts.
 - **Start from main.** `role` switches every checkout to `main` and fast-forwards it
-  at launch, and refuses to launch while a checkout has uncommitted changes. Commit
-  and push before you stop: uncommitted changes block the next launch.
+  at launch, but leaves a checkout with uncommitted changes as it is. Commit and
+  push before you stop.
 - **Sync often.** Other roles work on the same repos. Fetch and rebase on
   `origin/main` before starting a change and before pushing.
 - **Return to main when a PR is done.** Check out `main` and pull once your PR

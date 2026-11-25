@@ -15,9 +15,7 @@ done
 
 # A plain link rather than stow: stow 2.3.1 --dotfiles folds dot-local into one symlink.
 mkdir -p "$HOME/.local/bin"
-for f in role role-tmux; do
-	ln -sfn "$(dirname "$SAVE_DIR")/agents/$f" "$HOME/.local/bin/$f"
-done
+ln -sfn "$(dirname "$SAVE_DIR")/agents/role" "$HOME/.local/bin/role"
 mkdir -p "$HOME/.claude/skills"
 ln -sfn "$(dirname "$SAVE_DIR")/agents/skills/roles" "$HOME/.claude/skills/roles"
 ln -sfn "$(dirname "$SAVE_DIR")/agents/conduct.md" "$HOME/.claude/CLAUDE.md"
