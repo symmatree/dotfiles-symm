@@ -2,8 +2,8 @@
 # role-tmux <home-repo>/<role> [claude args...]
 #
 # Start a role in its own detached tmux session, role-<role>, with Remote Control
-# on and named after the role, so it can be reached from claude.ai or the phone.
-# The new session belongs to the tmux server, not to whoever ran this. Exits
+# on and the session named after the role, so it can be reached from claude.ai or
+# the phone. The new session belongs to the tmux server, not to whoever ran this. Exits
 # non-zero, printing what the launch printed, if role stops before claude is up.
 set -euo pipefail
 
@@ -17,7 +17,7 @@ role=${spec#*/}
 session=role-$role
 here=$(dirname "$(readlink -f "$0")")
 
-cmd=$(printf '%q ' "$here/role" "$spec" --remote-control "$role" "$@")
+cmd=$(printf '%q ' "$here/role" "$spec" --name "$role" --remote-control "$role" "$@")
 # remain-on-exit is set before the command starts, so a launch that fails at once
 # still leaves its output to read.
 tmux new-session -d -s "$session" -c "$HOME" -x 200 -y 50 \; \
