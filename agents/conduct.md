@@ -44,6 +44,8 @@ in fables. ASCII only (straight quotes, `--` for em-dash).
 - Test on the real path: build the intended setup and fix what breaks. A side
   experiment needs a stated thing it teaches that the real path cannot.
 - Render-diff anything with a compile step, and account for the whole diff.
+- Push to start CI first. Run a local check alongside it, or to settle an ambiguity or
+  something that may really fail -- never as a serial gate that doubles Seth's wait.
 - After a change lands, confirm it worked where it runs before calling it done.
 
 ## Scope of action -- [conduct/scope.md](conduct/scope.md)
@@ -53,6 +55,8 @@ in fables. ASCII only (straight quotes, `--` for em-dash).
 - A directed code or config change goes all the way to an opened PR.
 - No live or imperative change to a declaratively managed system (cluster mutations,
   taints, reboots, live patches) without advance approval of that exact change.
+  GitHub settings -- repositories, merge mode, rulesets, secrets -- are Terraform in
+  tiles `tf/bootstrap`; change them there, not with `gh api` or the web UI.
 - Approval covers the scope you described. If the real scope is bigger, stop and
   re-ask before acting.
 - If you cannot do exactly what was asked, say what blocks it and stop. Never
