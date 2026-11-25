@@ -9,28 +9,17 @@ A role is a succession of Claude sessions, one at a time, with a workspace at
 `~/roles/<role>` and a package at `<home-repo>/agents/<role>/` (symmatree repos).
 How the pieces work: `~/dotfiles-symm/agents/README.md`.
 
-## Start or resume a role
+## Start a role
 
 ```bash
-role-tmux <home-repo>/<role>              # the next session in the role
-role-tmux <home-repo>/<role> --continue   # resume its last session
+role <home-repo>/<role>              # the next session in the role
+role <home-repo>/<role> --continue   # resume its last session
 ```
 
 Only when Seth asks. It starts the role in a detached tmux session `role-<role>`,
-not as your child, and prints the Remote Control URL. Give Seth the URL.
-
-When it fails, report what it printed:
-
-- **uncommitted changes in a checkout** -- the role's last session left work in
-  `~/roles/<role>/<repo>`. Show Seth `git -C <checkout> status` and ask; do not commit,
-  stash or discard it.
-- **duplicate session `role-<role>`** or **already running** -- the role is up. Say so;
-  `tmux capture-pane -p -t role-<role> | grep -o 'https://claude.ai/code/[^ ]*'`
-  recovers its URL.
-- **no `<home-repo>/agents/<role>`** -- the package is not on `main`.
-- **Remote Control has not shown up**, with a "trust this folder" prompt in the output
-  -- the workspace is not under a trusted folder. `~/roles` is normally trusted once,
-  from a keyboard; tell Seth.
+not as your child; the session shows up as `<role>` on claude.ai and in Seth's
+Claude app. Report what it printed: a checkout it left alone, or that
+`role-<role>` already exists.
 
 ## Find existing roles
 

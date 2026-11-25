@@ -12,7 +12,6 @@ one closest to its work, and a workspace on the machine it runs on.
   .claude/settings.json         link into the role package
   .claude/settings.local.json   local; Claude writes it
   memory/                       the role's memory; local, not committed
-  .lock                         held while a session runs
   <repo>/                       one checkout per repo the role uses
 ```
 
@@ -47,90 +46,45 @@ packages cannot provide the same file; settings shared by every role belong in
 role <home-repo>/<role> [claude args...]   # e.g. role tiles/renovate --continue
 ```
 
-1. Clones any checkout that is missing.
-2. Switches every checkout to `main` and fast-forwards it. It stops, listing each
-   one, when a checkout has uncommitted changes or a local `main` that cannot
-   fast-forward.
+1. Exits if a tmux session `role-<role>` already exists, and says how to attach.
+2. Clones any checkout that is missing, then switches every checkout to `main` and
+   fast-forwards it. A checkout with uncommitted changes, or whose `main` cannot
+   fast-forward, is left as it is, with a warning.
 3. Restows the role package into the workspace, which also removes links to files
    the package no longer has.
-4. Runs `claude` in the workspace under `flock`, so a second launch of the role
-   exits while one is running.
-
-## `role-tmux`
-
-```bash
-role-tmux <home-repo>/<role> [claude args...]   # e.g. role-tmux tiles/renovate --continue
-```
-
-Runs `role` in a new detached tmux session, `role-<role>`, with
-`--name <role> --remote-control <role>`, so a session can be started from another
-session or from the phone and then reached through claude.ai or the Claude app. The tmux session
-belongs to the tmux server, not to the caller. It prints the Remote Control URL once
-claude is up, or what `role` printed if it stopped first. tmux refuses a second
-`role-<role>` session.
-
-Claude asks before trusting a new folder, and in a detached session nothing can
-answer. Trust covers subfolders, so `~/roles` is trusted once and every workspace
-under it inherits that.
+4. Starts `claude --name <role> --remote-control <role>` in a new tmux session
+   `role-<role>`, in the workspace. From a terminal it switches you to that session;
+   run by an agent it stays detached, and the session shows up by name on
+   claude.ai and in the Claude app.
 
 A new role is a role package merged to its home repo's `main`; `role` reads only
 `main`.
 
+When a session is full, Seth exports its transcript and renames it `saved-<role>`,
+so `<role>` is always the live one.
+
 ## `roles` skill
 
-`skills/roles/SKILL.md` tells any Claude session on the machine how to start, resume,
-find and create roles.
-
-`ubuntu-zsh/install.sh` links `role` and `role-tmux` into `~/.local/bin`, and the
-skill into `~/.claude/skills/roles`.
+`skills/roles/SKILL.md` tells any Claude session on the machine how to start, find
+and create roles.
 
 ## Setting up a machine
 
-Once per machine:
+`ubuntu-zsh/install.sh` links `role` into `~/.local/bin` and the skill into
+`~/.claude/skills/roles`. Where it has not run, as in the JupyterHub notebook (its
+image runs only `install-tools.ansible.yaml`, and the home directory persists),
+make the links by hand:
 
-1. The links `install.sh` makes: `role` and `role-tmux` in `~/.local/bin`, the skill
-   in `~/.claude/skills/roles`. `install.sh` makes them; where it has not run, as in
-   the JupyterHub notebook (its image runs only `install-tools.ansible.yaml`, and
-   the home directory persists), make them by hand:
+```bash
+mkdir -p ~/.local/bin ~/.claude/skills
+ln -sfn ~/dotfiles-symm/agents/role ~/.local/bin/role
+ln -sfn ~/dotfiles-symm/agents/skills/roles ~/.claude/skills/roles
+```
 
-   ```bash
-   mkdir -p ~/.local/bin ~/.claude/skills
-   for f in role role-tmux; do ln -sfn ~/dotfiles-symm/agents/$f ~/.local/bin/$f; done
-   ln -sfn ~/dotfiles-symm/agents/skills/roles ~/.claude/skills/roles
-   ```
+Before a role's first start, seed `~/roles/<role>/memory` if it starts from an
+existing memory pool (see the `roles` skill). Claude may ask about trusting the
+workspace or enabling MCP servers at a role's first start; answer in the session.
 
-2. Trust `~/roles`: run `claude` in `~/roles` once at a keyboard and answer "Yes, I
-   trust this folder". That lets every workspace under it start without a trust
-   prompt.
-
-Once per role workspace, before or at its first start:
-
-1. Seed `~/roles/<role>/memory`, if the role starts from an existing memory pool
-   (see the `roles` skill).
-2. Trust the workspace itself. Trust inherited from `~/roles` is enough to start,
-   but Claude keeps MCP server approvals only for the session in a folder that is
-   not trusted in its own right. With the role stopped, set its entry in
-   `~/.claude.json` (Claude rewrites that file while it runs, so write a copy and
-   move it into place):
-
-   ```bash
-   ws=$HOME/roles/<role>
-   jq --arg ws "$ws" '.projects[$ws].hasTrustDialogAccepted = true' ~/.claude.json >~/.claude.json.new &&
-     chmod --reference ~/.claude.json ~/.claude.json.new &&
-     mv ~/.claude.json.new ~/.claude.json
-   ```
-
-3. Answer the "new MCP servers found in this project" dialog. Claude asks it for
-   every workspace, since `~/.mcp.json` is above `~/roles`, and the role's
-   `enabledMcpjsonServers` does not answer it. A detached launch waits on it, so
-   `role-tmux` reports that Remote Control has not shown up; attach with
-   `tmux attach -t role-<role>`, answer it, and detach. The answer is kept in the
-   workspace's `.claude/settings.local.json`.
-
-## Session names
-
-`role-tmux` names each session after its role. When a session is full, Seth exports
-its transcript and renames it `saved-<role>`, so `<role>` is always the live one.
 ## Conduct
 
 `conduct.md` is how to work with Seth, in every session on the machine, role or not:
@@ -139,5 +93,4 @@ to it. Each rule is a line or two; the incidents behind each section are in
 `conduct/`, read on demand. A repo's own `CLAUDE.md` or `AGENTS.md` holds only what
 is particular to that repo.
 
-`ubuntu-zsh/install.sh` links `role` and `role-tmux` into `~/.local/bin`, the
-skill into `~/.claude/skills/roles`, and `conduct.md` to `~/.claude/CLAUDE.md`.
+`ubuntu-zsh/install.sh` links `conduct.md` to `~/.claude/CLAUDE.md`.
