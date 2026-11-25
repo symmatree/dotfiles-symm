@@ -63,8 +63,8 @@ role-tmux <home-repo>/<role> [claude args...]   # e.g. role-tmux tiles/renovate 
 ```
 
 Runs `role` in a new detached tmux session, `role-<role>`, with
-`--remote-control <role>`, so a session can be started from another session or from
-the phone and then reached through claude.ai or the Claude app. The tmux session
+`--name <role> --remote-control <role>`, so a session can be started from another
+session or from the phone and then reached through claude.ai or the Claude app. The tmux session
 belongs to the tmux server, not to the caller. It prints the Remote Control URL once
 claude is up, or what `role` printed if it stopped first. tmux refuses a second
 `role-<role>` session.
@@ -83,3 +83,51 @@ find and create roles.
 
 `ubuntu-zsh/install.sh` links `role` and `role-tmux` into `~/.local/bin`, and the
 skill into `~/.claude/skills/roles`.
+
+## Setting up a machine
+
+Once per machine:
+
+1. The links `install.sh` makes: `role` and `role-tmux` in `~/.local/bin`, the skill
+   in `~/.claude/skills/roles`. `install.sh` makes them; where it has not run, as in
+   the JupyterHub notebook (its image runs only `install-tools.ansible.yaml`, and
+   the home directory persists), make them by hand:
+
+   ```bash
+   mkdir -p ~/.local/bin ~/.claude/skills
+   for f in role role-tmux; do ln -sfn ~/dotfiles-symm/agents/$f ~/.local/bin/$f; done
+   ln -sfn ~/dotfiles-symm/agents/skills/roles ~/.claude/skills/roles
+   ```
+
+2. Trust `~/roles`: run `claude` in `~/roles` once at a keyboard and answer "Yes, I
+   trust this folder". That lets every workspace under it start without a trust
+   prompt.
+
+Once per role workspace, before or at its first start:
+
+1. Seed `~/roles/<role>/memory`, if the role starts from an existing memory pool
+   (see the `roles` skill).
+2. Trust the workspace itself. Trust inherited from `~/roles` is enough to start,
+   but Claude keeps MCP server approvals only for the session in a folder that is
+   not trusted in its own right. With the role stopped, set its entry in
+   `~/.claude.json` (Claude rewrites that file while it runs, so write a copy and
+   move it into place):
+
+   ```bash
+   ws=$HOME/roles/<role>
+   jq --arg ws "$ws" '.projects[$ws].hasTrustDialogAccepted = true' ~/.claude.json >~/.claude.json.new &&
+     chmod --reference ~/.claude.json ~/.claude.json.new &&
+     mv ~/.claude.json.new ~/.claude.json
+   ```
+
+3. Answer the "new MCP servers found in this project" dialog. Claude asks it for
+   every workspace, since `~/.mcp.json` is above `~/roles`, and the role's
+   `enabledMcpjsonServers` does not answer it. A detached launch waits on it, so
+   `role-tmux` reports that Remote Control has not shown up; attach with
+   `tmux attach -t role-<role>`, answer it, and detach. The answer is kept in the
+   workspace's `.claude/settings.local.json`.
+
+## Session names
+
+`role-tmux` names each session after its role. When a session is full, Seth exports
+its transcript and renames it `saved-<role>`, so `<role>` is always the live one.
