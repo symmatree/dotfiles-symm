@@ -55,6 +55,8 @@ in fables. ASCII only (straight quotes, `--` for em-dash).
 - A directed code or config change goes all the way to an opened PR.
 - No live or imperative change to a declaratively managed system (cluster mutations,
   taints, reboots, live patches) without advance approval of that exact change.
+  GitHub settings -- repositories, merge mode, rulesets, secrets -- are Terraform in
+  tiles `tf/bootstrap`; change them there, not with `gh api` or the web UI.
 - Approval covers the scope you described. If the real scope is bigger, stop and
   re-ask before acting.
 - If you cannot do exactly what was asked, say what blocks it and stop. Never
